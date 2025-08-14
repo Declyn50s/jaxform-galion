@@ -47,10 +47,10 @@ export function PreFiltering({ form, testMode, showErrors }: PreFilteringProps) 
   };
 
   const suggestions = [
-    { title: "LLA : Logements à Loyer Abordable", description: "Logements à loyers modérés hors dispositif LLM", url: "https://www.lausanne.ch/logement/lla" },
-    { title: "LE : Logements Étudiants", description: "Offre dédiée aux étudiant·e·s", url: "https://www.lausanne.ch/logement/etudiants" },
-    { title: "LS : Logements Séniors", description: "Solutions adaptées dès 60 ans", url: "https://www.lausanne.ch/logement/seniors" },
-    { title: "Logements à loyer libre de la Ville de Lausanne", description: "Annonces hors critères LLM", url: "https://www.lausanne.ch/logement/libre" }
+    { title: "LLA : Logements à Loyer Abordable", description: "Logements à loyers modérés hors dispositif LLM", url: "https://www.lausanne.ch/vie-pratique/logement/logements-utilite-publique/logement-loyer-abordable.html" },
+    { title: "LE : Logements Étudiants", description: "Offre dédiée aux étudiant·e·s", url: "https://www.lausanne.ch/vie-pratique/logement/logements-utilite-publique/logements-etudiants-le.html" },
+    { title: "LS : Logements Séniors", description: "Solutions adaptées dès 60 ans", url: "https://www.lausanne.ch/vie-pratique/logement/logements-utilite-publique/logements-seniors.html" },
+    { title: "Logements à loyer libre de la Ville de Lausanne", description: "Annonces hors critères LLM", url: "https://www.homegate.ch/louer/biens-immobiliers/liste-annonces?a=d038&l=neutral&incsubs=1" }
   ];
 
   if (!showLivingQuestion) return null;
