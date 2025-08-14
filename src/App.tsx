@@ -8,12 +8,15 @@ import { FormProgress } from '@/components/FormProgress';
 import { Step1TypeDemande } from '@/components/steps/Step1TypeDemande';
 import { PreFiltering } from '@/components/steps/PreFiltering';
 import { Step2Menage } from '@/components/steps/Step2Menage';
+import { Step3Logement } from '@/components/steps/Step3Logement';
+import { Step4Finances } from '@/components/steps/Step4Finances';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { RotateCcw, ArrowLeft, ArrowRight } from 'lucide-react';
+import Step6Consentements from './components/steps/Step6Consentements';
 
 // ---------- Types locaux
 type PhaseStep1 = 'type' | 'prefilter';
@@ -23,7 +26,7 @@ const defaultFormData: FormData = {
   members: [],
   logement: {
     pieces: 2,
-    loyerMensuelCHF: 1200,
+    loyerMensuelCHF: 0,
     motif: ''
   },
   finances: [],
@@ -88,7 +91,7 @@ function App() {
           form.setValue('currentStep', 2);
         }
         return;
-      }
+      } 
       // phase === 'prefilter'
       if (isPreFilteringValid) {
         setCurrentStep(2);
@@ -168,6 +171,16 @@ function App() {
     />
   );
 }
+if (currentStep === 3) {
+  return <Step3Logement form={form} testMode={testMode} />;
+}
+if (currentStep === 4) {
+    return <Step4Finances form={form} testMode={testMode} />;
+  }
+if (currentStep === 6) {
+  return <Step6Consentements form={form} testMode={testMode} />;
+}
+
     // Placeholder autres étapes
     return (
       <Card>
