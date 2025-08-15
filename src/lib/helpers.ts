@@ -27,12 +27,12 @@ export function requiresTaxDecision(
   permis?: string
 ): 'required' | 'optional' | 'none' {
   // Permis B/F: never ask for taxation
-  if (permis === 'B' || permis === 'F') {
+  if (permis === 'Permis B' || permis === 'Permis F') {
     return 'none';
   }
   
   // Swiss or Permis C
-  if (nationalite === 'Suisse' || permis === 'C') {
+  if (nationalite === 'Suisse' || permis === 'Permis C') {
     // Outside Vaud canton
     if (address.canton !== 'Vaud') {
       return 'required';
@@ -148,73 +148,54 @@ export function isCorelCommune(commune: string): boolean {
 /**
  * Calculate maximum pieces for household
  */
-export function calculateMaxPieces(members: Member[]): number {
-  // Count valid members (excluding those with invalid permits or no pregnancy certificate)
-  const validMembers = members.filter(member => {
-    // Check permit validity for non-Swiss
-    if (member.nationalite.pays !== 'Suisse' && member.permis) {
-      const validPermits = ['C', 'B', 'F'];
-      if (!validPermits.includes(member.permis.type || '')) {
-        return false; // Invalid permit
+export function calculateMaxPieces(members: any[]): number {
+  const validMembers = members.filter((m) => {
+    // Non-Suisses : permis string + restriction
+    const isSwiss = m?.nationalite?.iso === 'CH';
+
+    if (!isSwiss) {
+      const validPermits = ['Permis C','Permis B','Permis F'];
+      if (!validPermits.includes(m?.permis || '')) return false; // permis invalide
+      if (['Permis B','Permis F'].includes(m.permis)) {
+        if (!m.permisExpiration) return false;                   // pas de date
+        if (new Date(m.permisExpiration) < new Date()) return false; // expiré
       }
     }
-    
-    // Check pregnancy certificate for unborn children
-    if (member.role === 'enfantANaître') {
-      return member.grossesseInfo?.certificat.length! > 0;
+
+    // Enfant à naître : compter seulement si certificat présent (conforme à ton UI)
+    if (m.role === 'enfantANaître') {
+      return !!m.certificatGrossesse;
     }
-    
+
     return true;
   });
-  
-  const adults = validMembers.filter(m => {
-    if (!m.dateNaissance && m.role === 'locataire / preneur') return true;
+
+  const adults = validMembers.filter((m) => {
+    if (!m.dateNaissance && (m.role === 'locataire / preneur' || m.role === 'co-titulaire')) return true;
     return m.dateNaissance ? calcAge(m.dateNaissance) >= 18 : false;
   }).length;
-  
-  const children = validMembers.filter(m => {
+
+  const children = validMembers.filter((m) => {
     if (m.role === 'enfantANaître') return true;
     return m.dateNaissance ? calcAge(m.dateNaissance) < 18 : false;
   }).length;
-  
-  // Special rules for RI + young people: max 1.5 pieces
-  const isRI = members.some(m => 
-    // Check if any member receives RI
-    m.role === 'locataire / preneur' // This would need to be checked against income sources
-  );
-  
-  const isYoung = members.some(m => 
-    m.role === 'locataire / preneur' && 
-    m.dateNaissance && 
-    calcAge(m.dateNaissance) < 25
-  );
-  
-  if (isRI && isYoung) {
-    return 1.5;
-  }
-  
-  // Standard calculation
-  if (adults === 1 && children === 0) {
-    // Check if student under 25
-    const preneur = members.find(m => m.role === 'locataire / preneur');
-    if (preneur && preneur.dateNaissance && calcAge(preneur.dateNaissance) < 25) {
-      return 1.5; // Student or young person
-    }
-    return 2.5; // Single adult
-  }
-  
-  if (adults === 2 && children === 0) return 3.5; // Couple
-  if (adults === 2 && children === 1) return 3.5; // Couple + 1 child
-  if (adults === 2 && children === 2) return 4.5; // Couple + 2 children
-  if (adults === 2 && children >= 3) return 5.5; // Couple + 3+ children
-  
-  if (adults === 1 && children === 1) return 3.5; // Single parent + 1 child
-  if (adults === 1 && children === 2) return 4.5; // Single parent + 2 children
-  if (adults === 1 && children >= 3) return 5.5; // Single parent + 3+ children
-  
-  return 2.5; // Default
-}
 
+  // Règles spéciales (garde ta logique si tu as des flags ailleurs)
+  const preneur = members.find((x) => x.role === 'locataire / preneur');
+  const preneurYoung = preneur?.dateNaissance ? calcAge(preneur.dateNaissance) < 25 : false;
+
+  // Standard (tes paliers)
+  if (adults === 1 && children === 0) return preneurYoung ? 1.5 : 2.5;
+  if (adults === 2 && children === 0) return 3.5;
+  if (adults === 2 && children === 1) return 3.5;
+  if (adults === 2 && children === 2) return 4.5;
+  if (adults === 2 && children >= 3) return 5.5;
+  if (adults === 1 && children === 1) return 3.5;
+  if (adults === 1 && children === 2) return 4.5;
+  if (adults === 1 && children >= 3) return 5.5;
+
+  return 2.5;
+}
 /**
  * Generate reference number
  */

@@ -381,10 +381,6 @@ function MemberCard({
                   <Label>N°</Label>
                   <Input value={member?.adresse?.numero||''} onChange={(e)=>setValue(`members.${index}.adresse.numero`, e.target.value, { shouldDirty: true })} />
                 </div>
-                {/*<div>
-                  <Label>Canton</Label>
-                  <Input value={member?.adresse?.canton||''} onChange={(e)=>onChange({ adresse: { ...(member.adresse||{}), canton: e.target.value } })} placeholder="VD, GE, …" />
-                </div>*/}
               </div>
               <div className="grid gap-2 md:grid-cols-2">
                 <div>
@@ -629,7 +625,7 @@ function computeStepValidations(members: any[]) {
     // Adresse requise (hors enfant à naître)
     if (m.role !== 'enfantANaître') {
       const a = m.adresse || {};
-      if (!a.rue || !a.npaCommune || !a.canton) flagBlock(m, blockingErrors, `${label} : adresse incomplète (Rue, N°, NPA+Commune, Canton).`);
+      if (!a.rue || !a.npaCommune) flagBlock(m, blockingErrors, `${label} : adresse incomplète (Rue, N°, NPA+Commune).`);
     }
 
     // Nationalité requise

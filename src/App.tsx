@@ -12,13 +12,13 @@ import { Step3Logement } from '@/components/steps/Step3Logement';
 import { Step4Finances } from '@/components/steps/Step4Finances';
 import { Step5JeunesEtudiant } from '@/components/steps/Step5JeunesEtudiant';
 import Step6Consentements from './components/steps/Step6Consentements';
+import Step7Recap from './components/steps/Step7Recap';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { RotateCcw, ArrowLeft, ArrowRight } from 'lucide-react';
-
 
 // ---------- Types locaux
 type PhaseStep1 = 'type' | 'prefilter';
@@ -191,6 +191,9 @@ if (currentStep === 4) {
 }
 if (currentStep === 6) {
   return <Step6Consentements form={form} testMode={testMode} />;
+}
+if (currentStep ===7) {
+  return <Step7Recap form={form} testMode={testMode} />;
 }
 
     // Placeholder autres étapes

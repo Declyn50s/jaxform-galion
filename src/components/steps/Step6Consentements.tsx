@@ -116,7 +116,7 @@ export default function Step6Consentements({
       <Card className="overflow-hidden">
         <CardHeader className="space-y-1">
           <CardTitle id="titre-consentements" className="text-2xl">
-            Étape 6 — Consentements
+            Consentements
           </CardTitle>
           <p className="text-sm text-muted-foreground">
             Les cases suivantes sont requises et ne constituent pas une signature électronique.
