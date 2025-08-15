@@ -1,254 +1,248 @@
-import React, { useRef, useState } from 'react';
-import { Upload, File, X, Eye, AlertCircle, CheckCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { validateFileUpload, generateUploadFilename } from '@/lib/helpers';
-import { Upload as UploadType } from '@/types/form';
+import * as React from "react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Trash2, Upload, X } from "lucide-react";
 
-interface FileUploadProps {
-  files: UploadType[];
-  onChange: (files: UploadType[]) => void;
-  accept?: string;
-  maxFiles?: number;
-  maxTotalSize?: number; // in bytes
-  disabled?: boolean;
-  memberInfo?: { nom: string; prenom: string };
-  docType?: string;
-  showExample?: boolean;
-  onShowExample?: () => void;
-  required?: boolean;
-  'aria-label'?: string;
-  'aria-describedby'?: string;
-}
+type FileLike = File;
+
+type Props =
+  & {
+      /**
+       * MIME types acceptés (ex: "application/pdf" ou "application/pdf,image/png").
+       * Tu peux aussi passer des extensions (ex: ".pdf,.png")
+       */
+      accept?: string;
+      /**
+       * Autoriser plusieurs fichiers
+       */
+      multiple?: boolean;
+      /**
+       * Valeur contrôlée :
+       *  - single: File | null | undefined
+       *  - multiple: File[] | undefined
+       */
+      value?: FileLike | FileLike[] | null;
+      /**
+       * onChange contrôlé :
+       *  - single: (file: File | null) => void
+       *  - multiple: (files: File[]) => void
+       */
+      onChange: (next: any) => void;
+      /**
+       * Taille max d’UN fichier (en Mo). Par défaut 10.
+       */
+      maxSizeMB?: number;
+      /**
+       * Désactivé
+       */
+      disabled?: boolean;
+      /**
+       * Id pour l’input file (facultatif, sinon généré)
+       */
+      id?: string;
+      /**
+       * Libellé du bouton
+       */
+      buttonLabel?: string;
+      /**
+       * Message d’aide sous le bouton
+       */
+      hint?: string;
+    }
+  & React.HTMLAttributes<HTMLDivElement>;
 
 export function FileUpload({
-  files,
+  accept = "application/pdf",
+  multiple = false,
+  value,
   onChange,
-  accept = '.pdf',
-  maxFiles = 10,
-  maxTotalSize = 30 * 1024 * 1024, // 30MB
+  maxSizeMB = 10,
   disabled = false,
-  memberInfo,
-  docType = '',
-  showExample = false,
-  onShowExample,
-  required = false,
-  'aria-label': ariaLabel,
-  'aria-describedby': ariaDescribedBy
-}: FileUploadProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [dragOver, setDragOver] = useState(false);
-  const [error, setError] = useState<string>('');
+  id,
+  buttonLabel = "Choisir un fichier",
+  hint,
+  className,
+  ...rest
+}: Props) {
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
 
-  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+  // Normalisation : on fabrique TOUJOURS un tableau pour l’affichage interne,
+  // mais on renverra ce qu’attend le parent (single ou array).
+  const filesArray: FileLike[] = React.useMemo(() => {
+    if (Array.isArray(value)) return value;
+    if (value instanceof File) return [value];
+    return []; // null/undefined
+  }, [value]);
 
-  const handleFileSelect = (selectedFiles: FileList | null) => {
-    if (!selectedFiles) return;
+  const openPicker = () => {
+    setError(null);
+    inputRef.current?.click();
+  };
 
-    const newFiles: UploadType[] = [];
-    let hasError = false;
-
-    Array.from(selectedFiles).forEach((file, index) => {
-      const validation = validateFileUpload(file);
-      
-      if (!validation.valid) {
-        setError(validation.error || 'Erreur de validation');
-        hasError = true;
-        return;
-      }
-
-      if (files.length + newFiles.length >= maxFiles) {
-        setError(`Maximum ${maxFiles} fichiers autorisés`);
-        hasError = true;
-        return;
-      }
-
-      if (totalSize + file.size > maxTotalSize) {
-        setError('Taille totale des fichiers trop importante (max 30 Mo)');
-        hasError = true;
-        return;
-      }
-
-      const fileName = memberInfo ? 
-        generateUploadFilename(memberInfo, docType, files.length + newFiles.length + 1) :
-        file.name;
-
-      newFiles.push({
-        id: `${Date.now()}-${index}`,
-        name: fileName,
-        size: file.size,
-        type: file.type,
-        lastModified: file.lastModified,
-        status: 'success'
-      });
-    });
-
-    if (!hasError) {
-      setError('');
-      onChange([...files, ...newFiles]);
+  const validateOne = (f: FileLike): string | null => {
+    // Taille
+    if (f.size > maxSizeMB * 1024 * 1024) {
+      return `Le fichier « ${f.name} » dépasse ${maxSizeMB} Mo.`;
     }
+    // Type (si accept utilise des extensions, on tolère ; sinon MIME strict)
+    if (accept) {
+      const accepts = accept.split(",").map((s) => s.trim().toLowerCase());
+      const name = f.name.toLowerCase();
+      const mime = f.type.toLowerCase();
+
+      const ok = accepts.some((a) => {
+        if (a.startsWith(".")) {
+          // extension
+          return name.endsWith(a);
+        }
+        // mime
+        return mime === a || (a.endsWith("/*") && mime.startsWith(a.replace("/*", "/")));
+      });
+
+      if (!ok) {
+        return `Type non accepté pour « ${f.name} ». Types autorisés : ${accepts.join(", ")}`;
+      }
+    }
+    return null;
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    
-    if (disabled) return;
-    
-    handleFileSelect(e.dataTransfer.files);
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setError(null);
+    const list = e.target.files;
+    if (!list || list.length === 0) return;
+
+    const picked = Array.from(list);
+    // validations
+    for (const f of picked) {
+      const err = validateOne(f);
+      if (err) {
+        setError(err);
+        // ne met pas à jour la valeur si un fichier est invalide
+        // (si tu préfères filtrer les mauvais et garder les bons, adapte ici)
+        // On reset l'input pour autoriser re-pick du même nom
+        e.target.value = "";
+        return;
+      }
+    }
+
+    if (multiple) {
+      // cumul avec existants
+      const next = [...filesArray, ...picked];
+      onChange(next);
+    } else {
+      // single : on en prend un seul
+      onChange(picked[0] ?? null);
+    }
+
+    // reset pour pouvoir re-sélectionner le même fichier
+    e.target.value = "";
   };
 
-  const handleRemoveFile = (fileId: string) => {
-    onChange(files.filter(f => f.id !== fileId));
-    setError('');
+  const removeAt = (idx: number) => {
+    if (!multiple) {
+      onChange(null);
+      return;
+    }
+    const next = [...filesArray];
+    next.splice(idx, 1);
+    onChange(next);
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  const clearAll = () => {
+    if (multiple) onChange([]);
+    else onChange(null);
   };
+
+  const totalSize = filesArray.reduce((acc, f) => acc + (f?.size || 0), 0);
+  const prettySize = formatBytes(totalSize);
+
+  const inputId = id || React.useId();
 
   return (
-    <div className="space-y-4">
-      {/* Upload Area */}
-      <div
-        className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-          dragOver 
-            ? 'border-primary bg-primary/5' 
-            : 'border-muted-foreground/25 hover:border-primary/50'
-        } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-        onDrop={handleDrop}
-        onDragOver={(e) => {
-          e.preventDefault();
-          if (!disabled) setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onClick={() => !disabled && fileInputRef.current?.click()}
-        role="button"
-        tabIndex={0}
-        aria-label={ariaLabel || 'Zone de dépôt de fichiers'}
-        aria-describedby={ariaDescribedBy}
-        onKeyDown={(e) => {
-          if ((e.key === 'Enter' || e.key === ' ') && !disabled) {
-            e.preventDefault();
-            fileInputRef.current?.click();
-          }
-        }}
-      >
-        <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-        <div className="space-y-2">
-          <p className="text-sm font-medium">
-            Glissez vos fichiers ici ou cliquez pour sélectionner
-          </p>
-          <p className="text-xs text-muted-foreground">
-            PDF uniquement, max {formatFileSize(5 * 1024 * 1024)} par fichier
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Total utilisé: {formatFileSize(totalSize)} / {formatFileSize(maxTotalSize)}
-          </p>
-        </div>
+    <div className={className} {...rest}>
+      <input
+        ref={inputRef}
+        id={inputId}
+        type="file"
+        accept={accept}
+        multiple={multiple}
+        onChange={handleInputChange}
+        className="hidden"
+        disabled={disabled}
+      />
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={accept}
-          multiple={maxFiles > 1}
-          onChange={(e) => handleFileSelect(e.target.files)}
-          className="hidden"
-          disabled={disabled}
-          aria-required={required}
-        />
-      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" onClick={openPicker} disabled={disabled} className="flex items-center gap-2">
+          <Upload className="h-4 w-4" />
+          {buttonLabel}
+        </Button>
 
-      {/* Action Buttons */}
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled || files.length >= maxFiles}
-        >
-          <Upload className="h-4 w-4 mr-2" />
-          Ajouter fichiers
-        </Button>
-        
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => onChange([])}
-          disabled={disabled || files.length === 0}
-        >
-          Tout supprimer
-        </Button>
-        
-        {showExample && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={onShowExample}
-            className="ml-auto"
-          >
-            <Eye className="h-4 w-4 mr-2" />
-            Voir exemple
+        {filesArray.length > 0 && (
+          <Badge variant="secondary" className="text-xs">
+            {multiple ? `${filesArray.length} fichier(s)` : filesArray[0]?.name}
+          </Badge>
+        )}
+
+        {filesArray.length > 0 && multiple && (
+          <span className="text-xs text-muted-foreground">Total: {prettySize}</span>
+        )}
+
+        {filesArray.length > 0 && (
+          <Button type="button" variant="ghost" size="icon" onClick={clearAll} aria-label="Effacer">
+            <X className="h-4 w-4" />
           </Button>
         )}
       </div>
 
-      {/* Error Display */}
+      {hint && (
+        <p className="text-xs text-muted-foreground mt-1">
+          {hint}
+        </p>
+      )}
+
       {error && (
-        <Alert variant="destructive" role="alert" aria-live="polite">
-          <AlertCircle className="h-4 w-4" />
+        <Alert variant="destructive" className="mt-2">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      {/* File List */}
-      {files.length > 0 && (
-        <div className="space-y-2">
-          <h4 className="text-sm font-medium">Fichiers sélectionnés :</h4>
-          <div className="space-y-2 max-h-40 overflow-y-auto">
-            {files.map((file) => (
-              <div
-                key={file.id}
-                className="flex items-center gap-3 p-3 border rounded-lg bg-background"
-              >
-                <File className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{file.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatFileSize(file.size)}
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {file.status === 'success' && (
-                    <CheckCircle className="h-4 w-4 text-green-500" />
-                  )}
-                  
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRemoveFile(file.id)}
-                    disabled={disabled}
-                    aria-label={`Supprimer ${file.name}`}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
+      {/* Liste détaillée en mode multiple */}
+      {multiple && filesArray.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {filesArray.map((f, i) => (
+            <div key={`${f.name}-${i}`} className="flex items-center justify-between rounded-md border p-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium">{f.name}</div>
+                <div className="text-xs text-muted-foreground">{formatBytes(f.size)}</div>
               </div>
-            ))}
-          </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => removeAt(i)}
+                aria-label={`Supprimer ${f.name}`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
         </div>
       )}
     </div>
   );
+}
+
+export default FileUpload;
+
+// --------- utils
+function formatBytes(n: number) {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const k = 1024;
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(k)));
+  const val = n / Math.pow(k, i);
+  return `${val.toFixed(val >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
 }

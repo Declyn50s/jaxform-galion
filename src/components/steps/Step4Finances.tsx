@@ -9,8 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
 import {
-  ChevronDown,
-  ChevronUp,
   FileText,
   Plus,
   Minus,
@@ -118,6 +116,9 @@ export function Step4Finances({
 }) {
   const members = useWatch({ control: form.control, name: "members" }) as any[] | undefined;
   const finances = useWatch({ control: form.control, name: "finances" }) as any[] | undefined;
+  const viaFlagWork =
+  !!useWatch({ control: form.control, name: "preFiltering.flagViaWork" });
+
 
   const adults = useMemo(() => membersAdults(members || []), [members]);
   const [selectedAdultIndex, setSelectedAdultIndex] = useState<number | null>(adults[0]?.i ?? null);
@@ -196,7 +197,7 @@ export function Step4Finances({
     <div className="space-y-6">
       {/* Titre */}
       <div>
-        <h2 className="text-2xl font-semibold">Vos sources de revenu actuel</h2>
+        <h2 className="text-2xl font-semibold">Cochez vos sources de revenu actuel</h2>
         <p className="text-sm text-muted-foreground">
           Saisissez les revenus/ressources par adulte.<br></br>
           Les justificatifs peuvent être joints plus tard.
@@ -256,7 +257,7 @@ export function Step4Finances({
                   })}
                 </div>
 
-                {/* sections repliables par source cochée */}
+                {/* sections détaillées par source cochée (toujours visibles, pas de collapse) */}
                 <div className="space-y-3">
                   {g.items
                     .filter((src) => isSourceChecked(selectedAdultIndex, src))
@@ -268,6 +269,7 @@ export function Step4Finances({
                         <IncomeSection
                           key={src}
                           entry={entry}
+                          viaFlagWork={viaFlagWork}
                           onChange={(patch) =>
                             upsertEntry({ ...entry, ...patch, memberIndex: selectedAdultIndex, source: src })
                           }
@@ -311,18 +313,18 @@ export function Step4Finances({
   );
 }
 
-// ================== Section source (repliable)
+// ================== Section source (toujours ouverte)
 function IncomeSection({
   entry,
   onChange,
   onRemove,
+  viaFlagWork,
 }: {
   entry: any;
   onChange: (patch: any) => void;
   onRemove: () => void;
+  viaFlagWork: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-
   const piecesOk =
     entry?.pieces?.later === true ||
     (entry?.pieces?.files?.length || 0) > 0 ||
@@ -337,10 +339,6 @@ function IncomeSection({
           {piecesOk ? "Justificatifs: OK / Plus tard" : "Justificatifs manquants"}
         </div>
       </div>
-
-      <Button type="button" variant="ghost" size="icon" onClick={() => setOpen((o) => !o)} aria-label={open ? "Replier" : "Déplier"}>
-        {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-      </Button>
       <Button type="button" variant="ghost" size="icon" onClick={onRemove} aria-label="Supprimer">
         <Minus className="h-4 w-4" />
       </Button>
@@ -353,26 +351,34 @@ function IncomeSection({
         <CardTitle className="text-sm">{header}</CardTitle>
       </CardHeader>
 
-      {open && (
-        <CardContent className="space-y-4">
-          {/* Spécifiques par source */}
-          <SourceSpecificFields entry={entry} onChange={onChange} />
+      {/* Contenu toujours visible */}
+      <CardContent className="space-y-4">
+        {/* Spécifiques par source */}
+        <SourceSpecificFields entry={entry} onChange={onChange} viaFlagWork={viaFlagWork}/>
 
-          {/* Justificatifs communs */}
-          <PiecesBlock
-            label="Justificatifs (PDFs multiples) ou joindre plus tard"
-            files={entry?.pieces?.files || []}
-            later={!!entry?.pieces?.later}
-            onChange={(files, later) => onChange({ pieces: { files, later } })}
-          />
-        </CardContent>
-      )}
+        {/* Justificatifs communs */}
+        <PiecesBlock
+          label="Justificatifs (PDFs multiples) ou joindre plus tard"
+          files={entry?.pieces?.files || []}
+          later={!!entry?.pieces?.later}
+          onChange={(files, later) => onChange({ pieces: { files, later } })}
+        />
+      </CardContent>
     </Card>
   );
 }
 
 // ======= Champs spécifiques selon la source
-function SourceSpecificFields({ entry, onChange }: { entry: any; onChange: (p: any) => void }) {
+function SourceSpecificFields({
+  entry,
+  onChange,
+  viaFlagWork,
+}: {
+  entry: any;
+  onChange: (p: any) => void;
+  viaFlagWork: boolean;
+}) {
+
   const s: FinanceSource = entry?.source;
 
   // Travail — Salarié
@@ -383,21 +389,16 @@ function SourceSpecificFields({ entry, onChange }: { entry: any; onChange: (p: a
           items={[
             "Contrat de travail",
             "6 dernières fiches de salaire",
-            "Si travail à Lausanne (flag via travail): + certificats de salaire des 3 dernières années",
-            "Hors Lausanne (travail): certificats de travail 3 ans",
-          ]}
+            // ✅ ces deux lignes ne s'affichent que si on a dit OUI dans PreFiltering
+          ...(viaFlagWork
+            ? [
+                "Certificats de salaire des 3 dernières années"
+              ]
+            : []),
+        ]}
         />
 
         <div className="grid gap-2 md:grid-cols-3">
-          <div className="flex items-center gap-2 mt-6">
-            <Switch
-              id="trav-lsne"
-              checked={!!entry?.travailALausanne}
-              onCheckedChange={(v) => onChange({ travailALausanne: v })}
-            />
-            <Label htmlFor="trav-lsne">Travail à Lausanne</Label>
-          </div>
-
           <div className="flex items-center gap-2 mt-6">
             <Switch
               id="autres-emp"
@@ -419,39 +420,35 @@ function SourceSpecificFields({ entry, onChange }: { entry: any; onChange: (p: a
   }
 
   // Travail — Indépendant
-  if (s === "independant") {
-    return (
-      <div className="space-y-4">
-        <SectionNote
-          items={[
-            "Bilan fiduciaire",
-            "Si activité < 1 an : décision de cotisations AVS provisoire",
-            "Si travail à Lausanne uniquement (flag via travail): + bilans des 3 dernières années + bail commercial",
-            "Hors Lausanne : 3 bilans fiduciaires annuels",
-          ]}
-        />
-        <div className="grid gap-2 md:grid-cols-3">
-          <div>
-            <Label>Date de début d’activité</Label>
-            <Input
-              type="date"
-              max={todayISO()}
-              value={entry?.dateDebutActivite || ""}
-              onChange={(e) => onChange({ dateDebutActivite: e.target.value })}
-            />
-          </div>
-          <div className="flex items-center gap-2 mt-6">
-            <Switch
-              id="trav-lsne2"
-              checked={!!entry?.travailALausanne}
-              onCheckedChange={(v) => onChange({ travailALausanne: v })}
-            />
-            <Label htmlFor="trav-lsne2">Travail à Lausanne</Label>
-          </div>
+if (s === "independant") {
+  const items = viaFlagWork
+    ? [
+        "Bilan fiduciaire des 3 dernières années",
+        "Bail commercial",
+      ]
+    : [
+        "Bilan fiduciaire",
+        "Si activité < 1 an : décision de cotisations AVS provisoire",
+      ];
+
+  return (
+    <div className="space-y-4">
+      <SectionNote items={items} />
+      <div className="grid gap-2 md:grid-cols-3">
+        <div>
+          <Label>Date de début d’activité</Label>
+          <Input
+            type="date"
+            max={todayISO()}
+            value={entry?.dateDebutActivite || ""}
+            onChange={(e) => onChange({ dateDebutActivite: e.target.value })}
+          />
         </div>
       </div>
-    );
-  }
+    </div>
+  );
+}
+
 
   // AI
   if (s === "ai") {
