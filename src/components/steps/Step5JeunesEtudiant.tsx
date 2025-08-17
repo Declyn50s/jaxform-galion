@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { FileUpload } from '@/components/FileUpload';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
+import { COREL_COMMUNES } from '@/types/form';
 
 // Helper pour calculer l’âge
 const calcAge = (birthDate?: string): number | null => {
@@ -18,37 +19,6 @@ const calcAge = (birthDate?: string): number | null => {
   const diff = Date.now() - dob.getTime();
   return new Date(diff).getUTCFullYear() - 1970;
 };
-
-// Communes COREL + Lausanne (liste fermée)
-const COREL_COMMUNES = [
-  'Lausanne',
-  'Bussigny',
-  'Chavannes-près-Renens',
-  'Crissier',
-  'Ecublens',
-  'Prilly',
-  'Renens',
-  'St-Sulpice',
-  'Villars-Sainte-Croix',
-  'Bottens',
-  'Bretigny-sur-Morrens',
-  'Cheseaux-sur-Lausanne',
-  'Cugy',
-  'Froideville',
-  'Jouxtens-Mézery',
-  'Le Mont-sur-Lausanne',
-  'Morrens',
-  'Romanel-sur-Lausanne',
-  'Belmont-sur-Lausanne',
-  'Épalinges',
-  'Lutry',
-  'Jorat-Mézières',
-  'Montpreveyres',
-  'Paudex',
-  'Pully',
-  'Savigny',
-  'Servion',
-] as const;
 
 interface Step5JeunesEtudiantProps {
   form: UseFormReturn<FormData>;

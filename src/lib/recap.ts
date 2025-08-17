@@ -54,6 +54,30 @@ const isPermitValidForMember = (m: any): boolean => {
 
 const isValidIsoDate = (s?: string) => !!s && !Number.isNaN(new Date(s).getTime());
 
+// Éligibilité “Conditions étudiantes” (plafond 1,5 pièce)
+const isEligibleJeunesFormation = (data: any): boolean => {
+  const typeOK = data?.typeDemande === 'Conditions étudiantes';
+
+  const preneur = (data?.members ?? []).find((m: any) => m?.role === 'locataire / preneur');
+  const age = preneur?.dateNaissance ? calcAge(preneur.dateNaissance) : null;
+
+  // Tolère jeunesEtudiant ou jeunesEtudiants (sing/pluriel)
+  const je = data?.jeunesEtudiant ?? data?.jeunesEtudiants ?? {};
+  const toutPublic = !!je?.toutPublic;
+  const bourseOuRevenuMin = !!je?.bourseOuRevenuMin;
+  const formationLausanne = !!je?.formationLausanne; // mis à jour par Step5
+
+ // Aligne sur App.tsx : OK si âge inconnu OU 18–24.
+ const ageOK = (age == null) || (age >= 18 && age < 25);
+ return (
+   typeOK &&
+   !toutPublic &&
+   ageOK &&
+   bourseOuRevenuMin &&
+   formationLausanne
+);
+};
+
 // -------------------- 1) Récap ménage + application des règles "pièces"
 export function computeHouseholdSummary(data: any): HouseholdSummary {
   const members: any[] = data?.members || [];
@@ -70,6 +94,14 @@ export function computeHouseholdSummary(data: any): HouseholdSummary {
     (m) => m.role === 'enfantANaître' && !m.certificatGrossesse
   ).length;
 
+  // Barème “classique”
+  const baseMax = calculateMaxPieces(members);
+
+  // Plafond “jeunes” (1,5 pièce max)
+  const piecesMaxRegle = isEligibleJeunesFormation(data)
+    ? Math.min(Number(baseMax), 1.5)
+    : baseMax;
+
   return {
     typeDemande: data?.typeDemande ?? null,
     nbAdults,
@@ -77,7 +109,7 @@ export function computeHouseholdSummary(data: any): HouseholdSummary {
     nbExcludedChildren,
     nbExcludedByPermit,
     piecesDeclarees: data?.logement?.pieces ?? null,
-    piecesMaxRegle: calculateMaxPieces(members),
+    piecesMaxRegle,
   };
 }
 
@@ -101,13 +133,6 @@ export function computeTaxationRequirement(data: any): TaxationRequirement {
 
   return "optional";
 }
-
-// -------------------- 3) Revenu mensuel estimé (ancien modèle avec montants)
-/** @deprecated Plus de montants saisis ; renvoie 0. Préférer computeIncomeDeclarationStatus. */
-export function computeEstimatedMonthlyIncome(_data: FormData): number {
-  return 0;
-}
-
 /** Statut de déclaration de revenus par adulte (sans montants). */
 export function computeIncomeDeclarationStatus(data: FormData): {
   totalAdults: number;

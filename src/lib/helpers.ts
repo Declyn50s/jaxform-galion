@@ -94,8 +94,8 @@ export function buildMissingDocs(formData: FormData): {
   }
   
   // Check student documentation for "Conditions étudiantes"
-  if (formData.typeDemande === 'Conditions étudiantes' && formData.jeunesEtudiants) {
-    if (formData.jeunesEtudiants.attestationEtudes.length === 0) {
+  if (formData.typeDemande === 'Conditions étudiantes' && formData.jeunesEtudiant) {
+    if (formData.jeunesEtudiant.attestationEtudes.length === 0) {
       blockingDocs.push('Attestation d\'études obligatoire pour les conditions étudiantes');
     }
   }
@@ -192,10 +192,13 @@ export function calculateMaxPieces(members: any[]): number {
   );
 
   // Adultes = >= 18 (inchangé)
-  const adults = baseMembers.filter((m) => {
-    if (!m.dateNaissance && (m.role === 'locataire / preneur' || m.role === 'co-titulaire')) return true;
-    return m.dateNaissance ? calcAge(m.dateNaissance) >= 18 : false;
-  }).length;
+ const adults = baseMembers.filter((m) => {
+   // Le preneur peut être compté sans DOB (comme dans App.tsx)
+   if (!m.dateNaissance && m.role === 'locataire / preneur') return true;
+   // Co-titulaire uniquement si DOB ≥ 18
+   if (!m.dateNaissance && m.role === 'co-titulaire') return false;
+   return m.dateNaissance ? calcAge(m.dateNaissance) >= 18 : false;
+ }).length;
 
   // Enfants pour le barème = enfants à charge (<25) résidents + enfant à naître (si certif)
   const residentChildren = baseMembers.filter((m) => isDependentChild(m)).length;

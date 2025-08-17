@@ -41,6 +41,7 @@ export const memberSchema = z.object({
   genre: z.enum(["Homme", "Femme", "Autre"]),
   dateNaissance: z.string().optional(),
   dateAccouchement: z.string().optional(),
+
   adresse: z.object({
     rue: z.string().min(1, "La rue est requise"),
     numero: z.string().min(1, "Le numéro est requis"),
@@ -48,29 +49,47 @@ export const memberSchema = z.object({
     canton: z.string().min(1, "Le canton est requis"),
     sameAsPrevious: z.boolean().default(false),
   }),
+
   telephone: z.string().optional(),
   email: z.string().email().optional(),
+
   nationalite: z.object({
     pays: z.string().min(1, "La nationalité est requise"),
     iso: z.string(),
     emoji: z.string(),
   }),
+
+  // Permis sous forme d'objet (cohérent avec Step5/ton schéma)
   permis: z
     .object({
       type: z.enum(["Permis C", "Permis B", "Permis F", "Sans permis", "Autre"]).optional(),
       dateExpiration: z.string().optional(),
     })
     .optional(),
+
+  // États civils élargis pour coller aux usages de recap.ts
   etatCivil: z
-    .enum(["Célibataire", "Marié·e", "Divorcé·e", "Veuf·ve", "Partenariat"])
+    .enum([
+      "Célibataire",
+      "Marié·e",
+      "Divorcé·e",
+      "Veuf·ve",
+      "Partenariat",
+      "Séparé·e",
+      "Part. dissous",
+    ])
     .optional(),
-  role: z.enum(["locataire / preneur", "enfant", "autre", "enfantANaître"]),
+
+  // Ajout de "co-titulaire" (utilisé dans isAdult / recap.ts)
+  role: z.enum(["locataire / preneur", "co-titulaire", "enfant", "autre", "enfantANaître"]),
+
   marriageInfo: z
     .object({
       lieuConjoint: z.string().optional(),
       certificat: z.array(uploadSchema).default([]),
     })
     .optional(),
+
   grossesseInfo: z
     .object({
       certificat: z.array(uploadSchema).default([]),
@@ -91,7 +110,7 @@ export type Member = z.infer<typeof memberSchema>;
 
 const employeurSchema = z.object({
   nom: z.string().default(""),
-  justificatifs: z.array(uploadSchema).default([]), // si ton FileUpload renvoie des objets
+  justificatifs: z.array(uploadSchema).default([]),
 });
 
 export const financeEntrySchema = z.object({
@@ -101,7 +120,7 @@ export const financeEntrySchema = z.object({
   // Métadonnées communes
   pieces: z
     .object({
-      files: z.array(uploadSchema).default([]),   // si tu utilises des File natifs, remplace par z.any().array()
+      files: z.array(uploadSchema).default([]),
       later: z.boolean().default(false),
     })
     .default({ files: [], later: false }),
@@ -181,7 +200,23 @@ export const formSchema = z.object({
   // Snapshot calculé par Step4 (non validé côté utilisateur)
   pendingLater: z.array(pendingLaterItemSchema).default([]).optional(),
 
-  // Step 5: Jeunes/Étudiants (conditionnel)
+  // ---------- Step 5: Jeunes/Étudiants ----------
+  // Bloc ACTUEL utilisé par Step5JeunesEtudiant (singulier)
+  jeunesEtudiant: z
+    .object({
+      formationLausanne: z.boolean().default(false),
+      bourseOuRevenuMin: z.boolean().default(false),
+      toutPublic: z.boolean().default(false),
+
+      // champs d’IHM Step5
+      communeFormation: z.string().optional(),
+      motifImperieux: z.string().optional(),
+      // fichier côté RHF — on le laisse permissif
+      motifImperieuxFile: z.any().optional(),
+    })
+    .optional(),
+
+  // Bloc ANCIEN conservé pour compatibilité (pluriel)
   jeunesEtudiants: z
     .object({
       attestationEtudes: z.array(uploadSchema).default([]),

@@ -13,6 +13,7 @@ import { Step4Finances } from '@/components/steps/Step4Finances';
 import { Step5JeunesEtudiant } from '@/components/steps/Step5JeunesEtudiant';
 import Step6Consentements from './components/steps/Step6Consentements';
 import Step7Recap from './components/steps/Step7Recap';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
