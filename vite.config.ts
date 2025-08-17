@@ -4,6 +4,7 @@ import path from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: '/jaxform-galion/',
   plugins: [react()],
   optimizeDeps: {
     exclude: ['lucide-react'],
