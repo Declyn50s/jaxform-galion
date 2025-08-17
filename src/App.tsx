@@ -19,40 +19,32 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { RotateCcw, ArrowLeft, ArrowRight } from 'lucide-react';
+import { calcAge } from '@/lib/helpers';
 
-// ---------- Types locaux
 type PhaseStep1 = 'type' | 'prefilter';
 
 const defaultFormData: FormData = {
-  typeDemande: 'Inscription' as any,
+  typeDemande: undefined as any,
   members: [],
-  logement: {
-    pieces: 2,
-    loyerMensuelCHF: 0,
+  logement: { pieces: 2, loyerMensuelCHF: 0, motif: '' },
+  finances: [],
+  consentements: { traitementDonnees: false, conditionsGenerales: false },
+  jeunesEtudiant: {
+    statutEtudiant: false,
+    formationLausanne: false,
+    bourseOuRevenuMin: false,
+    toutPublic: false,
     motif: ''
   },
-  finances: [],
-  consentements: {
-    traitementDonnees: false,
-    conditionsGenerales: false
-  },
-  jeunesEtudiant: {
-  statutEtudiant: false,
-  formationLausanne: false,
-  bourseOuRevenuMin: false,
-  toutPublic: false,
-  motif: ''
-},
   testMode: false,
   currentStep: 1
 };
 
 function App() {
-  const totalSteps = 7; // le prefilter N'EST PAS une étape
   const [testMode, setTestMode] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(1);
-  const [phase, setPhase] = useState<PhaseStep1>('type');      // sous-phase de l'étape 1
+  const [phase, setPhase] = useState<PhaseStep1>('type');
   const [showPrefilterErrors, setShowPrefilterErrors] = useState(false);
 
   const form = useForm<FormData>({
@@ -63,11 +55,27 @@ function App() {
 
   const { clearSavedData } = useAutoSave(form.watch(), userEmail);
 
-  // Watch pour la logique
+  // Watch
   const typeDemande = form.watch('typeDemande');
   const preFiltering = form.watch('preFiltering');
+  const members = form.watch('members') || [];
 
-  // Si on quitte "Inscription" → sortir de la sous-phase + purge preFiltering
+  // 🔑 Nouveau : observe directement les champs
+  const habite = form.watch("preFiltering.habiteLausanne3Ans");
+  const travaille = form.watch("preFiltering.travailleLausanne3Ans");
+  const isPreFilteringValid = testMode || (habite === true || travaille === true);
+
+  // Flow étudiant = type "Conditions étudiantes" ET âge preneur < 25 (ou inconnu)
+  const preneur = members.find((m: any) => m?.role === 'locataire / preneur');
+  const preneurAge = preneur?.dateNaissance ? calcAge(preneur.dateNaissance) : null;
+  const isStudentType = typeDemande === 'Conditions étudiantes';
+  const ageOk = preneurAge == null || preneurAge < 25;
+  const isStudentFlow = isStudentType && ageOk;
+
+  // total dynamique (6 ou 7)
+  const totalSteps = isStudentFlow ? 7 : 6;
+
+  // Sortir de la sous-phase et vider le préfiltrage si on quitte "Inscription"
   useEffect(() => {
     if (typeDemande !== 'Inscription') {
       if (phase === 'prefilter') setPhase('type');
@@ -78,50 +86,64 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [typeDemande]);
 
-  // Valid pré-filtrage (ou bypass testMode)
-  const isPreFilteringValid =
-    testMode ||
-    (!!preFiltering &&
-      (preFiltering.habiteLausanne3Ans === true ||
-       preFiltering.travailleLausanne3Ans === true));
+  // ✅ NAVIGATION SANS SAUTER L'INDEX 5
+  const nextStep = (cur: number) => {
+    const cap = isStudentFlow ? 7 : 6;
+    const n = Math.min(cur + 1, cap);
+    return n;
+  };
+  const prevStep = (cur: number) => Math.max(cur - 1, 1);
 
-  // Navigation
+  // Clamp simple si on dépasse la borne max en changeant de flow
+  useEffect(() => {
+    const cap = isStudentFlow ? 7 : 6;
+    if (currentStep > cap) {
+      setCurrentStep(cap);
+      form.setValue('currentStep', cap);
+    }
+  }, [isStudentFlow, currentStep, form]);
+
+  // Next
   const handleNext = () => {
     if (currentStep === 1) {
       if (phase === 'type') {
         if (typeDemande === 'Inscription') {
           if (!preFiltering) {
-            form.setValue('preFiltering', {}, { shouldValidate: false, shouldDirty: true });
+            form.setValue('preFiltering', {
+              habiteLausanne3Ans: undefined,
+              travailleLausanne3Ans: undefined,
+              flagViaWork: false,
+            }, { shouldValidate: false, shouldDirty: true });
           }
-          setPhase('prefilter');           // remplace l'affichage, même étape
+          setPhase('prefilter');
           setShowPrefilterErrors(false);
         } else {
-          setCurrentStep(2);               // passe à l'étape 2 directe
+          setCurrentStep(2);
           form.setValue('currentStep', 2);
         }
         return;
-      } 
+      }
       // phase === 'prefilter'
       if (isPreFilteringValid) {
         setCurrentStep(2);
         form.setValue('currentStep', 2);
-        setPhase('type');                  // reset phase pour de futurs retours
+        setPhase('type');
         setShowPrefilterErrors(false);
       } else {
-        setShowPrefilterErrors(true);      // bloque tant que pas valide (hors testMode)
+        setShowPrefilterErrors(true);
       }
       return;
     }
 
-    if (currentStep < totalSteps) {
-      setCurrentStep((prev) => prev + 1);
-      form.setValue('currentStep', currentStep + 1);
-    }
+    const n = nextStep(currentStep);
+    setCurrentStep(n);
+    form.setValue('currentStep', n);
   };
 
+  // Previous
   const handlePrevious = () => {
     if (currentStep === 1 && phase === 'prefilter') {
-      setPhase('type');                    // retour à Step1 sans changer d'étape
+      setPhase('type');
       setShowPrefilterErrors(false);
       return;
     }
@@ -137,10 +159,10 @@ function App() {
       }
       return;
     }
-    if (currentStep > 1) {
-      setCurrentStep((prev) => prev - 1);
-      form.setValue('currentStep', currentStep - 1);
-    }
+
+    const p = prevStep(currentStep);
+    setCurrentStep(p);
+    form.setValue('currentStep', p);
   };
 
   const handleReset = () => {
@@ -153,6 +175,7 @@ function App() {
     }
   };
 
+  // Rendu des étapes
   const renderCurrentStep = () => {
     if (currentStep === 1) {
       return (
@@ -164,39 +187,30 @@ function App() {
               onTypeChange={(v) => { if (v !== 'Inscription') setPhase('type'); }}
             />
           )}
-
           {phase === 'prefilter' && (
             <PreFiltering form={form} testMode={testMode} showErrors={showPrefilterErrors} />
           )}
         </div>
       );
     }
-    if (currentStep === 2) {
-  return (
-    <Step2Menage
-      form={form}
-      testMode={testMode}
-      onValidityChange={(blocked)=>{/* optionnel: gérer le bouton Suivant */}}
-    />
-  );
-}
-if (currentStep === 3) {
-  return <Step3Logement form={form} testMode={testMode} />;
-}
-if (currentStep === 4) {
-    return <Step4Finances form={form} testMode={testMode} />;
-  }
-  if (currentStep === 5) {
-  return <Step5JeunesEtudiant form={form} testMode={testMode} />;
-}
-if (currentStep === 6) {
-  return <Step6Consentements form={form} testMode={testMode} />;
-}
-if (currentStep ===7) {
-  return <Step7Recap form={form} testMode={testMode} />;
-}
+    if (currentStep === 2) return <Step2Menage form={form} testMode={testMode} onValidityChange={() => {}} />;
+    if (currentStep === 3) return <Step3Logement form={form} testMode={testMode} />;
+    if (currentStep === 4) return <Step4Finances form={form} testMode={testMode} />;
 
-    // Placeholder autres étapes
+    if (currentStep === 5) {
+      return isStudentFlow
+        ? <Step5JeunesEtudiant form={form} testMode={testMode} />
+        : <Step6Consentements form={form} testMode={testMode} />;
+    }
+
+    if (currentStep === 6) {
+      return isStudentFlow
+        ? <Step6Consentements form={form} testMode={testMode} />
+        : <Step7Recap form={form} testMode={testMode} />;
+    }
+
+    if (currentStep === 7) return <Step7Recap form={form} testMode={testMode} />;
+
     return (
       <Card>
         <CardContent className="p-8 text-center">
@@ -213,14 +227,10 @@ if (currentStep ===7) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
       <div className="container mx-auto px-4 py-8 max-w-4xl">
-
-        {/* Header */}
         <div className="mb-8 text-center">
-          {/*<h1 className="text-3xl font-bold text-gray-900 mb-2">Demande de logement LLM</h1>*/}
           <p className="text-muted-foreground">Formulaire de demande pour les Logements à Loyer Modéré</p>
         </div>
 
-        {/* Controls */}
         <Card className="mb-6">
           <CardContent className="p-4">
             <div className="flex justify-between items-center">
@@ -253,14 +263,17 @@ if (currentStep ===7) {
           </CardContent>
         </Card>
 
-        {/* Progress (ne compte pas la sous-phase) */}
-        <FormProgress currentStep={currentStep} totalSteps={totalSteps} testMode={testMode} />
+        <FormProgress
+          currentStep={currentStep}
+          totalSteps={totalSteps}
+          testMode={testMode}
+          isStudentFlow={isStudentFlow}
+        />
 
-        {/* Form Content */}
         <form onSubmit={form.handleSubmit(() => {})}>
           <AnimatePresence mode="wait">
             <motion.div
-              key={`${currentStep}-${phase}`} // clé inclut la phase pour une transition propre
+              key={`${currentStep}-${phase}-${isStudentFlow}`}
               initial={{ opacity: 0, x: 50 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -50 }}
@@ -270,7 +283,6 @@ if (currentStep ===7) {
             </motion.div>
           </AnimatePresence>
 
-          {/* Navigation */}
           <div className="flex justify-between items-center mt-8">
             <Button
               type="button"
@@ -288,7 +300,6 @@ if (currentStep ===7) {
                 <Button
                   type="button"
                   onClick={handleNext}
-                  // À l’écran "type", on bloque Suivant si aucun type choisi
                   disabled={currentStep === 1 && phase === 'type' && !typeDemande}
                   className="flex items-center gap-2"
                 >
@@ -308,7 +319,6 @@ if (currentStep ===7) {
           </div>
         </form>
 
-        {/* Debug (mode test) */}
         {testMode && (
           <Card className="mt-8 border-yellow-200 bg-yellow-50">
             <CardContent className="p-4">
@@ -317,6 +327,8 @@ if (currentStep ===7) {
                 <p>Étape actuelle: {currentStep}/{totalSteps}</p>
                 <p>Phase étape 1: {phase}</p>
                 <p>Type de demande: {String(typeDemande)}</p>
+                <p>Flow étudiant: {isStudentFlow ? 'Oui' : 'Non'}</p>
+                <p>Âge preneur: {preneurAge ?? 'inconnu'}</p>
                 <p>Pré-filtrage valide (ou test): {isPreFilteringValid ? 'Oui' : 'Non'}</p>
               </div>
             </CardContent>

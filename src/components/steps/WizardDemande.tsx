@@ -1,10 +1,10 @@
 // src/components/WizardDemande.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Step1TypeDemande } from './steps/Step1TypeDemande';
-import { PreFiltering } from './steps/PreFiltering'; // <- export nommé
+import { Step1TypeDemande } from './Step1TypeDemande';
+import { PreFiltering } from './PreFiltering'; // <- export nommé
 import type { FormData } from '@/types/form';        // <- unifie le type partagé
-import { Step2Menage } from './steps/Step2Menage';
+import { Step2Menage } from './Step2Menage';
 
 
 type PhaseStep1 = 'type' | 'prefilter';
@@ -27,6 +27,11 @@ export default function WizardDemande() {
 
   const typeDemande = form.watch('typeDemande');
   const preFiltering = form.watch('preFiltering');
+
+  const habite = form.watch('preFiltering.habiteLausanne3Ans');
+  const travaille = form.watch('preFiltering.travailleLausanne3Ans');
+
+  const isPreFilteringValid = testMode || (habite === true || travaille === true);
 
   // Ne JAMAIS compter PreFiltering comme une étape
   const progressStep = step;
@@ -54,16 +59,18 @@ export default function WizardDemande() {
     if (step === 1) {
       if (phase === 'type') {
         if (typeDemande === 'Inscription') {
-          // On initialise l’objet preFiltering si nécessaire et on reste à l’étape 1
-          if (!preFiltering) {
-            form.setValue('preFiltering', {}, { shouldValidate: false, shouldDirty: true });
-          }
-          setPhase('prefilter');
-          setShowPrefilterErrors(false);
-        } else {
-          // Pas "Inscription" → étape 2 directe
-          setStep(2);
-        }
+  if (!preFiltering) {
+    form.setValue('preFiltering', {
+      habiteLausanne3Ans: undefined,
+      travailleLausanne3Ans: undefined,
+      flagViaWork: false,
+    }, { shouldValidate: false, shouldDirty: true });
+  }
+  setPhase('prefilter');
+  setShowPrefilterErrors(false);
+} else {
+  setStep(2);
+}
         return;
       }
       // phase === 'prefilter'

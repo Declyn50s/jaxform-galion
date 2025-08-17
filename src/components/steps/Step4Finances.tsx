@@ -8,12 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
-import {
-  FileText,
-  Plus,
-  Minus,
-  AlertCircle,
-} from "lucide-react";
+import { FileText, Plus, Minus, AlertCircle } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FileUpload } from "@/components/FileUpload";
 import { calcAge } from "@/lib/helpers";
@@ -65,6 +60,16 @@ type FinanceSource =
   | "autres"
   | "sans_revenu";
 
+type PendingLater = {
+  id: string; // ex: "2:salarie:pieces"
+  memberIndex: number;
+  memberName: string;
+  source: FinanceSource;
+  sourceLabel: string;
+  fieldPath: string; // ex: finances[3].pieces
+  label: string; // ex: "Justificatifs du revenu (bloc principal)"
+};
+
 const SOURCE_LABEL: Record<FinanceSource, string> = {
   salarie: "Salarié·e",
   independant: "Indépendant·e",
@@ -81,7 +86,6 @@ const SOURCE_LABEL: Record<FinanceSource, string> = {
   formation: "En formation",
   bourse: "Bourse d’études",
   apprentissage: "Apprentissage / job",
-  // apg: "APG", // inchangé: laissé en dehors du type d'origine
   autres: "Autres revenus",
   sans_revenu: "Sans revenu",
 } as const;
@@ -96,7 +100,7 @@ const GROUPS: { title: string; items: FinanceSource[] }[] = [
   { title: "Autres", items: ["sans_revenu", "autres"] },
 ];
 
-// ---- Helpers de dates
+// ---- Helpers
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const int = (v: any) => (Number.isFinite(+v) ? Math.max(0, Math.trunc(+v)) : 0);
 
@@ -104,6 +108,36 @@ function membersAdults(members: any[]) {
   return (members || [])
     .map((m: any, i: number) => ({ m, i }))
     .filter(({ m }) => m?.dateNaissance && calcAge(m.dateNaissance) >= 18);
+}
+
+function displayName(m: any) {
+  return [m?.prenom, m?.nom].filter(Boolean).join(" ");
+}
+
+function extractLaterFromFinances(
+  members: any[] | undefined,
+  finances: any[] | undefined
+): PendingLater[] {
+  if (!finances?.length) return [];
+  const nameOf = (idx: number) => displayName(members?.[idx]) || `Personne #${idx}`;
+
+  const list: PendingLater[] = [];
+  finances.forEach((entry, idxInArray) => {
+    const src = entry?.source as FinanceSource | undefined;
+    if (!src) return;
+    if (entry?.pieces?.later === true) {
+      list.push({
+        id: `${entry.memberIndex}:${src}:pieces`,
+        memberIndex: entry.memberIndex,
+        memberName: nameOf(entry.memberIndex),
+        source: src,
+        sourceLabel: SOURCE_LABEL[src],
+        fieldPath: `finances[${idxInArray}].pieces`,
+        label: "Justificatifs du revenu (bloc principal)",
+      });
+    }
+  });
+  return list;
 }
 
 // ===== Composant principal
@@ -116,14 +150,18 @@ export function Step4Finances({
 }) {
   const members = useWatch({ control: form.control, name: "members" }) as any[] | undefined;
   const finances = useWatch({ control: form.control, name: "finances" }) as any[] | undefined;
-  const viaFlagWork =
-  !!useWatch({ control: form.control, name: "preFiltering.flagViaWork" });
+  const viaFlagWork = !!useWatch({ control: form.control, name: "preFiltering.flagViaWork" });
 
+  // Snapshot centralisé des "Joindre plus tard"
+  useEffect(() => {
+    const pending = extractLaterFromFinances(members, finances);
+    form.setValue("pendingLater" as any, pending, { shouldDirty: false, shouldValidate: false });
+  }, [members, finances, form]);
 
   const adults = useMemo(() => membersAdults(members || []), [members]);
   const [selectedAdultIndex, setSelectedAdultIndex] = useState<number | null>(adults[0]?.i ?? null);
 
-  // Sélecteur adulte: si plus d’adultes, restabiliser l’index
+  // Sélecteur adulte: si la liste change, stabiliser l’index
   useEffect(() => {
     const set = new Set(adults.map((a) => a.i));
     if (selectedAdultIndex === null || !set.has(selectedAdultIndex)) {
@@ -132,7 +170,7 @@ export function Step4Finances({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adults.length]);
 
-  // Renvoie les entrées d’un adulte
+  // Entrées pour l’adulte sélectionné
   const entriesForAdult = useMemo(
     () => (finances || []).filter((f: any) => f.memberIndex === selectedAdultIndex),
     [finances, selectedAdultIndex]
@@ -153,7 +191,9 @@ export function Step4Finances({
   };
 
   const removeEntry = (memberIndex: number, source: FinanceSource) => {
-    const all = [...(finances || [])].filter((e: any) => !(e.memberIndex === memberIndex && e.source === source));
+    const all = [...(finances || [])].filter(
+      (e: any) => !(e.memberIndex === memberIndex && e.source === source)
+    );
     form.setValue("finances" as any, all, { shouldDirty: true, shouldValidate: !testMode });
   };
 
@@ -186,12 +226,14 @@ export function Step4Finances({
       }
     });
     if (map.size === 0) return false;
-    const allSans = [...map.values()].every((arr) => arr.length > 0 && arr.every((s) => s === "sans_revenu"));
+    const allSans = [...map.values()].every(
+      (arr) => arr.length > 0 && arr.every((s) => s === "sans_revenu")
+    );
     return allSans;
   }, [adults, finances]);
 
   const isDemandeEtudiante = form.watch("typeDemande") === "Conditions étudiantes";
-  const etudiantNonEligible = isDemandeEtudiante && (preneurAge !== null && preneurAge >= 25);
+  const etudiantNonEligible = isDemandeEtudiante && preneurAge !== null && preneurAge >= 25;
 
   return (
     <div className="space-y-6">
@@ -199,7 +241,7 @@ export function Step4Finances({
       <div>
         <h2 className="text-2xl font-semibold">Cochez vos sources de revenu actuel</h2>
         <p className="text-sm text-muted-foreground">
-          Saisissez les revenus/ressources par adulte.<br></br>
+          Saisissez les revenus/ressources par adulte.<br />
           Les justificatifs peuvent être joints plus tard.
         </p>
       </div>
@@ -212,7 +254,9 @@ export function Step4Finances({
             value={selectedAdultIndex !== null ? String(selectedAdultIndex) : ""}
             onValueChange={(val) => setSelectedAdultIndex(parseInt(val, 10))}
           >
-            <SelectTrigger><SelectValue placeholder="Choisir une personne" /></SelectTrigger>
+            <SelectTrigger>
+              <SelectValue placeholder="Choisir une personne" />
+            </SelectTrigger>
             <SelectContent>
               {adults.map(({ m, i }) => (
                 <SelectItem key={i} value={String(i)}>
@@ -290,7 +334,7 @@ export function Step4Finances({
           <Alert variant="destructive" role="alert" aria-live="polite">
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
-              Refus bloquant : tous les adultes sont déclarés <strong>sans revenu</strong>.
+              Refus bloquant : tous les adultes sont déclarés <strong>sans revenu</strong>.
             </AlertDescription>
           </Alert>
         )}
@@ -300,10 +344,10 @@ export function Step4Finances({
             <CardContent className="p-4 text-sm text-yellow-800 space-y-1">
               <div className="font-medium">Parcours "jeunes/étudiant" désactivé</div>
               <ul className="list-disc pl-5">
-                {preneurAge !== null && preneurAge >= 25 && (
-                  <li>Âge du preneur ≥ 25 ans.</li>
-                )}
-                <li>Si ce n’est pas une première formation à Lausanne/Région, motif supplémentaire requis.</li>
+                {preneurAge !== null && preneurAge >= 25 && <li>Âge du preneur ≥ 25 ans.</li>}
+                <li>
+                  Si ce n’est pas une première formation à Lausanne/Région, motif supplémentaire requis.
+                </li>
               </ul>
             </CardContent>
           </Card>
@@ -328,8 +372,9 @@ function IncomeSection({
   const piecesOk =
     entry?.pieces?.later === true ||
     (entry?.pieces?.files?.length || 0) > 0 ||
-    // si certaines sources ont d'autres sous-justificatifs (employeurs)
     (entry?.employeurs || []).some((e: any) => (e?.justificatifs?.length || 0) > 0);
+
+  const laterSwitchId = `later-${entry?.source}-${entry?.memberIndex}`;
 
   const header = (
     <div className="flex items-start gap-3 w-full">
@@ -351,10 +396,9 @@ function IncomeSection({
         <CardTitle className="text-sm">{header}</CardTitle>
       </CardHeader>
 
-      {/* Contenu toujours visible */}
       <CardContent className="space-y-4">
         {/* Spécifiques par source */}
-        <SourceSpecificFields entry={entry} onChange={onChange} viaFlagWork={viaFlagWork}/>
+        <SourceSpecificFields entry={entry} onChange={onChange} viaFlagWork={viaFlagWork} />
 
         {/* Justificatifs communs */}
         <PiecesBlock
@@ -362,6 +406,7 @@ function IncomeSection({
           files={entry?.pieces?.files || []}
           later={!!entry?.pieces?.later}
           onChange={(files, later) => onChange({ pieces: { files, later } })}
+          inputId={laterSwitchId}
         />
       </CardContent>
     </Card>
@@ -378,7 +423,6 @@ function SourceSpecificFields({
   onChange: (p: any) => void;
   viaFlagWork: boolean;
 }) {
-
   const s: FinanceSource = entry?.source;
 
   // Travail — Salarié
@@ -389,13 +433,8 @@ function SourceSpecificFields({
           items={[
             "Contrat de travail",
             "6 dernières fiches de salaire",
-            // ✅ ces deux lignes ne s'affichent que si on a dit OUI dans PreFiltering
-          ...(viaFlagWork
-            ? [
-                "Certificats de salaire des 3 dernières années"
-              ]
-            : []),
-        ]}
+            ...(viaFlagWork ? ["Certificats de salaire des 3 dernières années"] : []),
+          ]}
         />
 
         <div className="grid gap-2 md:grid-cols-3">
@@ -403,52 +442,47 @@ function SourceSpecificFields({
             <Switch
               id="autres-emp"
               checked={!!entry?.autresEmployeurs}
-              onCheckedChange={(v) => onChange({ autresEmployeurs: v, employeurs: v ? (entry?.employeurs || [{ nom: "" }]) : [] })}
+              onCheckedChange={(v) =>
+                onChange({
+                  autresEmployeurs: v,
+                  employeurs: v ? entry?.employeurs || [{ nom: "" }] : [],
+                })
+              }
             />
             <Label htmlFor="autres-emp">Autres employeurs ?</Label>
           </div>
         </div>
 
         {entry?.autresEmployeurs && (
-          <EmployeursArray
-            value={entry?.employeurs || []}
-            onChange={(arr) => onChange({ employeurs: arr })}
-          />
+          <EmployeursArray value={entry?.employeurs || []} onChange={(arr) => onChange({ employeurs: arr })} />
         )}
       </div>
     );
   }
 
   // Travail — Indépendant
-if (s === "independant") {
-  const items = viaFlagWork
-    ? [
-        "Bilan fiduciaire des 3 dernières années",
-        "Bail commercial",
-      ]
-    : [
-        "Bilan fiduciaire",
-        "Si activité < 1 an : décision de cotisations AVS provisoire",
-      ];
+  if (s === "independant") {
+    const items = viaFlagWork
+      ? ["Bilan fiduciaire des 3 dernières années", "Bail commercial"]
+      : ["Bilan fiduciaire", "Si activité < 1 an : décision de cotisations AVS provisoire"];
 
-  return (
-    <div className="space-y-4">
-      <SectionNote items={items} />
-      <div className="grid gap-2 md:grid-cols-3">
-        <div>
-          <Label>Date de début d’activité</Label>
-          <Input
-            type="date"
-            max={todayISO()}
-            value={entry?.dateDebutActivite || ""}
-            onChange={(e) => onChange({ dateDebutActivite: e.target.value })}
-          />
+    return (
+      <div className="space-y-4">
+        <SectionNote items={items} />
+        <div className="grid gap-2 md:grid-cols-3">
+          <div>
+            <Label>Date de début d’activité</Label>
+            <Input
+              type="date"
+              max={todayISO()}
+              value={entry?.dateDebutActivite || ""}
+              onChange={(e) => onChange({ dateDebutActivite: e.target.value })}
+            />
+          </div>
         </div>
       </div>
-    </div>
-  );
-}
-
+    );
+  }
 
   // AI
   if (s === "ai") {
@@ -472,41 +506,23 @@ if (s === "independant") {
   }
 
   // AVS
-  if (s === "avs") {
-    return <SectionNote items={["Décision AVS récente", "Si > 1 an : attestation fiscale récente"]} />;
-  }
+  if (s === "avs") return <SectionNote items={["Décision AVS récente", "Si > 1 an : attestation fiscale récente"]} />;
 
   // 2e pilier (LPP)
-  if (s === "pilier2") {
-    return <SectionNote items={["Attestation fiscale de la rente LPP"]} />;
-  }
+  if (s === "pilier2") return <SectionNote items={["Attestation fiscale de la rente LPP"]} />;
 
   // Rente-pont
-  if (s === "rente_pont") {
-    return <SectionNote items={["Décision de rente-pont"]} />;
-  }
+  if (s === "rente_pont") return <SectionNote items={["Décision de rente-pont"]} />;
 
   // Chômage
-  if (s === "chomage") {
-    return <SectionNote items={["Dernier décompte de chômage"]} />;
-  }
+  if (s === "chomage") return <SectionNote items={["Dernier décompte de chômage"]} />;
 
   // PC famille / PC / RI / EVAM / Bourse
-  if (s === "pcfamille") {
-    return <SectionNote items={["Décision récente de PC Famille"]} />;
-  }
-  if (s === "pc") {
-    return <SectionNote items={["Décision récente de Prestation Complémentaire (PC)"]} />;
-  }
-  if (s === "ri") {
-    return <SectionNote items={["3 derniers budgets mensuels (RI)"]} />;
-  }
-  if (s === "evam") {
-    return <SectionNote items={["3 derniers budgets mensuels (EVAM)"]} />;
-  }
-  if (s === "bourse") {
-    return <SectionNote items={["Avis d’octroi de bourse d’études"]} />;
-  }
+  if (s === "pcfamille") return <SectionNote items={["Décision récente de PC Famille"]} />;
+  if (s === "pc") return <SectionNote items={["Décision récente de Prestation Complémentaire (PC)"]} />;
+  if (s === "ri") return <SectionNote items={["3 derniers budgets mensuels (RI)"]} />;
+  if (s === "evam") return <SectionNote items={["3 derniers budgets mensuels (EVAM)"]} />;
+  if (s === "bourse") return <SectionNote items={["Avis d’octroi de bourse d’études"]} />;
 
   // Pension alimentaire
   if (s === "pension") {
@@ -514,11 +530,10 @@ if (s === "independant") {
       <div className="grid gap-2 md:grid-cols-3">
         <div>
           <Label>Reçu ou Versé</Label>
-          <Select
-            value={entry?.pensionRecuOuVerse || ""}
-            onValueChange={(v) => onChange({ pensionRecuOuVerse: v })}
-          >
-            <SelectTrigger><SelectValue placeholder="Sélectionner" /></SelectTrigger>
+          <Select value={entry?.pensionRecuOuVerse || ""} onValueChange={(v) => onChange({ pensionRecuOuVerse: v })}>
+            <SelectTrigger>
+              <SelectValue placeholder="Sélectionner" />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="reçu">Reçu</SelectItem>
               <SelectItem value="versé">Versé</SelectItem>
@@ -565,14 +580,10 @@ if (s === "independant") {
   }
 
   // Apprentissage / Job
-  if (s === "apprentissage") {
-    return <SectionNote items={["Contrat + dernière fiche de salaire"]} />;
-  }
+  if (s === "apprentissage") return <SectionNote items={["Contrat + dernière fiche de salaire"]} />;
 
   // Autres / Sans revenu
-  if (s === "autres") {
-    return <SectionNote items={["Joindre tout justificatif pertinent (APG militaire : dernier décompte ou décision)"]} />;
-  }
+  if (s === "autres") return <SectionNote items={["Joindre tout justificatif pertinent (APG militaire : dernier décompte ou décision)"]} />;
 
   if (s === "sans_revenu") {
     return (
@@ -654,27 +665,26 @@ function PiecesBlock({
   files,
   later,
   onChange,
+  inputId,
 }: {
   label: string;
   files: File[];
   later: boolean;
   onChange: (files: File[], later: boolean) => void;
+  inputId: string;
 }) {
   return (
     <div className="space-y-2">
-      <div className="text-sm font-medium flex items-center gap-2"><FileText className="h-4 w-4" /> {label}</div>
+      <div className="text-sm font-medium flex items-center gap-2">
+        <FileText className="h-4 w-4" /> {label}
+      </div>
       <div className="grid gap-2 md:grid-cols-3 items-end">
         <div className="md:col-span-2">
-          <FileUpload
-            accept="application/pdf"
-            multiple
-            value={files}
-            onChange={(fs) => onChange(fs, later)}
-          />
+          <FileUpload accept="application/pdf" multiple value={files} onChange={(fs) => onChange(fs, later)} />
         </div>
         <div className="flex items-center gap-2">
-          <Switch id="later" checked={later} onCheckedChange={(v) => onChange(files, v)} />
-          <Label htmlFor="later">Joindre plus tard</Label>
+          <Switch id={inputId} checked={later} onCheckedChange={(v) => onChange(files, v)} />
+          <Label htmlFor={inputId}>Joindre plus tard</Label>
         </div>
       </div>
     </div>
@@ -696,10 +706,6 @@ function SectionNote({ items, compact = false }: { items: string[]; compact?: bo
   );
 }
 
-// ====== Helpers d’affichage
-function displayName(m: any) {
-  return [m?.prenom, m?.nom].filter(Boolean).join(" ");
-}
 function clampInt(v: any, min: number, max: number) {
   const x = int(v);
   return Math.min(max, Math.max(min, x));

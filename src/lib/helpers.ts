@@ -196,6 +196,18 @@ export function calculateMaxPieces(members: any[]): number {
 
   return 2.5;
 }
+
+export function isHommeSeul(members: any[]): boolean {
+  const titulaires = members.filter((m: any) =>
+    ['locataire / preneur', 'co-titulaire'].includes(m.role)
+  );
+  if (titulaires.length !== 1) return false;
+
+  const t = titulaires[0] || {};
+  if (t.genre !== 'H') return false;
+
+  return t.etatCivil !== 'Marié·e';
+}
 /**
  * Generate reference number
  */

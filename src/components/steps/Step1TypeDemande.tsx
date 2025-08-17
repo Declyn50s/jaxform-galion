@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { UseFormReturn } from 'react-hook-form';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -15,7 +15,7 @@ interface Step1Props {
 }
 
 export function Step1TypeDemande({ form, testMode, onTypeChange }: Step1Props) {
-  const { watch, setValue, formState: { errors } } = form;
+  const { watch, setValue, getValues, formState: { errors } } = form;
 
   const typeDemande = watch('typeDemande');
   const members = watch('members') || [];
@@ -32,25 +32,35 @@ export function Step1TypeDemande({ form, testMode, onTypeChange }: Step1Props) {
     { value: 'Conditions étudiantes', label: 'Conditions étudiantes', description: 'Parcours spécial jeunes en formation' }
   ];
 
+  // Sécurité: si le navigateur réinjecte une ancienne valeur, on l'efface
+  useEffect(() => {
+    const v = getValues('typeDemande');
+    if (v === '' || v === null) {
+      setValue('typeDemande', undefined as any, { shouldValidate: false, shouldDirty: false });
+    }
+    // NE PAS définir de valeur par défaut ici: on laisse vide.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleTypeChange = (value: string) => {
     setValue('typeDemande', value as any, { shouldValidate: true });
-
-    // Reset du pré-filtrage si on quitte Inscription
     if (value !== 'Inscription') {
       setValue('preFiltering', undefined, { shouldValidate: false, shouldDirty: true });
     }
     onTypeChange?.(value);
   };
 
+  const clearSelection = () => {
+    setValue('typeDemande', undefined as any, { shouldValidate: true, shouldDirty: true });
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" autoComplete="off">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             Type de demande
-            {testMode && (
-              <Badge variant="outline" className="ml-auto">Mode Test</Badge>
-            )}
+            {testMode && <Badge variant="outline" className="ml-auto">Mode Test</Badge>}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -59,27 +69,42 @@ export function Step1TypeDemande({ form, testMode, onTypeChange }: Step1Props) {
               Sélectionnez le type de votre demande :
             </Label>
 
-            {demandTypes.map((type) => (
-              <div key={type.value}>
-                <label className="flex items-start gap-3 p-4 border rounded-lg cursor-pointer transition-colors hover:bg-accent/50 focus-within:ring-2 focus-within:ring-ring">
-                  <input
-                    type="radio"
-                    name="typeDemande"
-                    value={type.value}
-                    checked={typeDemande === type.value}
-                    onChange={(e) => handleTypeChange(e.target.value)}
-                    className="mt-1 h-4 w-4 text-primary focus:ring-2 focus:ring-primary focus:ring-offset-2"
-                    aria-describedby={`${type.value}-description`}
-                  />
-                  <div className="flex-1">
-                    <div className="font-medium">{type.label}</div>
-                    <div id={`${type.value}-description`} className="text-sm text-muted-foreground mt-1">
-                      {type.description}
-                    </div>
-                  </div>
-                </label>
-              </div>
-            ))}
+            {demandTypes.map((type) => {
+  const isSelected = typeDemande === type.value;
+
+  return (
+    <div key={type.value}>
+      <label
+        className={`flex items-start gap-3 p-4 border rounded-lg cursor-pointer transition-colors
+          focus-within:ring-2 focus-within:ring-ring
+          ${isSelected 
+            ? "bg-[hsl(var(--primary))] text-white border-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))]/80 hover:text-black" 
+            : "hover:bg-[hsl(var(--primary))]/80 hover:text-black"
+          }`}
+      >
+        <input
+          type="radio"
+          name="typeDemande"
+          value={type.value}
+          checked={isSelected}
+          onChange={(e) => handleTypeChange(e.target.value)}
+          className="mt-1 h-4 w-4 text-primary focus:ring-2 focus:ring-primary focus:ring-offset-2"
+          aria-describedby={`${type.value}-description`}
+        />
+        <div className="flex-1">
+          <div className="font-medium">{type.label}</div>
+          <div
+            id={`${type.value}-description`}
+            className="text-sm mt-1"
+          >
+            {type.description}
+          </div>
+        </div>
+      </label>
+    </div>
+  );
+})}
+
           </div>
 
           {errors.typeDemande && (
@@ -114,7 +139,7 @@ export function Step1TypeDemande({ form, testMode, onTypeChange }: Step1Props) {
                   <li>• Réservé aux personnes de <strong>moins de 25 ans</strong></li>
                   <li>• Nationalité suisse ou permis C/B/F valable</li>
                   <li>• Première formation à Lausanne Région</li>
-                  <li>• Bourse ou activité accessoire de <strong>+6'000 CHF/an</strong></li>
+                  <li>• Bourse ou/et activité accessoire de <strong>+6'000 CHF/an</strong></li>
                   <li>• Avoir un motif impérieux</li>
                 </ul>
               </AlertDescription>

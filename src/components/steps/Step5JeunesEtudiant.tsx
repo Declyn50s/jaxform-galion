@@ -4,11 +4,11 @@ import { UseFormReturn } from 'react-hook-form';
 import { FormData } from '@/types/form';
 import { Card, CardContent } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from '@/components/ui/input';
+import { FileUpload } from '@/components/FileUpload';
 
 // Helper pour calculer l’âge
 const calcAge = (birthDate?: string): number | null => {
@@ -47,7 +47,7 @@ const COREL_COMMUNES = [
   'Pully',
   'Savigny',
   'Servion',
-];
+] as const;
 
 interface Step5JeunesEtudiantProps {
   form: UseFormReturn<FormData>;
@@ -60,106 +60,75 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
   const typeDemande = watch('typeDemande');
   const preneur = watch('members')?.find(m => m.role === 'locataire / preneur');
   const agePreneur = calcAge(preneur?.dateNaissance);
+  const motifImperieuxFile = watch('jeunesEtudiant.motifImperieuxFile') as File | undefined;
+
 
   // Champs du formulaire
-  const statutEtudiant = watch('jeunesEtudiant.statutEtudiant');
   const bourseOuRevenuMin = watch('jeunesEtudiant.bourseOuRevenuMin');
   const toutPublic = watch('jeunesEtudiant.toutPublic');
 
-  // NOUVEAUX CHAMPS
+
+  // Champ libre (lieu)
   const communeFormation = watch('jeunesEtudiant.communeFormation') as string | undefined;
   const motifImperieux = watch('jeunesEtudiant.motifImperieux') as string | undefined;
 
-  // Dérive automatiquement "formationLausanne" en fonction de la commune choisie (compat rétro si le type existe)
-  const formationDansCOREL = useMemo(
-    () => !!communeFormation && COREL_COMMUNES.includes(communeFormation),
-    [communeFormation]
-  );
+  // Normalisation (pour comparer aux COREL)
+  const norm = (s: string) =>
+    s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 
-  // Écrit le flag legacy si présent dans le schéma
+  // formationDansCOREL basé sur le champ libre
+  const formationDansCOREL = useMemo(() => {
+    if (!communeFormation) return false;
+    return COREL_COMMUNES.map(norm).includes(norm(communeFormation));
+  }, [communeFormation]);
+
+  // Met à jour le flag legacy et hors-zone
   useEffect(() => {
     try {
       setValue('jeunesEtudiant.formationLausanne', formationDansCOREL as any);
-    } catch {
-      // pas grave si le champ n'existe pas dans FormData
-    }
-  }, [formationDansCOREL, setValue]);
+    } catch {}
+    try {
+      setValue(
+        'jeunesEtudiant.communeHorsZoneNom',
+        communeFormation && !formationDansCOREL ? communeFormation : ''
+      );
+    } catch {}
+  }, [formationDansCOREL, communeFormation, setValue]);
 
-  // Si on coche "tout public", on désactive l'éligibilité jeunes et on exige un motif
+  // Si mode tout public, on force certaines valeurs
   useEffect(() => {
     if (toutPublic) {
       try {
-        setValue('jeunesEtudiant.statutEtudiant', false);
-        setValue('jeunesEtudiant.bourseOuRevenuMin', false);
+        // L'ancien champ statutEtudiant a été retiré
         setValue('jeunesEtudiant.formationLausanne', false);
-      } catch {
-        /* noop */
-      }
+      } catch {}
     }
   }, [toutPublic, setValue]);
 
-  // Si on ne doit pas afficher, on ne rend rien
   if (typeDemande !== 'Conditions étudiantes') return null;
   if (agePreneur !== null && agePreneur >= 25) return null;
 
-  // Règle d’éligibilité (claire et stricte)
+  // Eligibilité (le critère "statut étudiant" a été retiré)
   const isEligibleJeunes =
     !toutPublic &&
     typeDemande === 'Conditions étudiantes' &&
     agePreneur !== null &&
     agePreneur < 25 &&
-    statutEtudiant &&
     bourseOuRevenuMin &&
     formationDansCOREL;
 
-  const communeManquanteOuHorsZone = !communeFormation || !formationDansCOREL;
+  const communeVide = !communeFormation || !communeFormation.trim();
+  const requiresMotifFile = !!toutPublic; // on exige la pièce jointe en mode tout public
 
   return (
     <Card>
       <CardContent className="space-y-6">
-        <h2 className="text-xl font-bold">Étape 5 — Jeunes / Étudiant</h2>
+        <h2 className="text-xl font-bold">Jeunes en formation de moins de 25 ans</h2>
         <p className="text-sm text-muted-foreground">
           Conditions spéciales pour les jeunes entre 18 et 25 ans en formation (1,5 pièce maximum).
         </p>
 
         <div className="space-y-4">
-          {/* Statut étudiant */}
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="statutEtudiant"
-              checked={!!statutEtudiant}
-              onCheckedChange={(val) => setValue('jeunesEtudiant.statutEtudiant', !!val)}
-              disabled={!!toutPublic}
-            />
-            <Label htmlFor="statutEtudiant">Je suis en première formation</Label>
-          </div>
-
-          {/* Commune de formation (OBLIGATOIRE) */}
-          <div className="space-y-2">
-            <Label htmlFor="communeFormation">Commune de formation</Label>
-            <Select
-              value={communeFormation ?? ''}
-              onValueChange={(v) => setValue('jeunesEtudiant.communeFormation', v)}
-            >
-              <SelectTrigger id="communeFormation">
-                <SelectValue placeholder="Sélectionner une commune (Lausanne / COREL)" />
-              </SelectTrigger>
-              <SelectContent>
-                {COREL_COMMUNES.map((c) => (
-                  <SelectItem key={c} value={c}>{c}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Rappel : le lieu de la formation doit être **à Lausanne** ou **dans Lausanne Région (COREL)**.
-            </p>
-            {communeManquanteOuHorsZone && (
-              <p className="text-xs text-red-600">
-                Sélection obligatoire. Hors zone = **non éligible** aux conditions étudiantes.
-              </p>
-            )}
-          </div>
-
           {/* Bourse ou revenu min */}
           <div className="flex items-center gap-2">
             <Checkbox
@@ -169,9 +138,62 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
               disabled={!!toutPublic}
             />
             <Label htmlFor="bourseOuRevenuMin">
-              Je bénéficie d&apos;une bourse ou j&apos;ai un revenu accessoire ≥ CHF 6’000/an
+              Je bénéficie d&apos;une bourse et/ou j&apos;ai un revenu accessoire ≥ CHF 6’000/an
             </Label>
           </div>
+
+          {/* Lieu de formation — champ texte libre */}
+          <div className="space-y-1">
+            <Label htmlFor="communeFormation">Lieu de la formation</Label>
+            <div className="flex items-center gap-2 rounded-xl border px-3 py-2 focus-within:ring-2 bg-white
+              border-input focus-within:ring-blue-500">
+              <span aria-hidden>📍</span>
+              <Input
+                id="communeFormation"
+                placeholder="Ex. Lausanne, Crissier…"
+                value={communeFormation ?? ''}
+                onChange={(e) => setValue('jeunesEtudiant.communeFormation', e.target.value)}
+                className="border-0 focus-visible:ring-0 focus:outline-none p-0"
+              />
+            </div>
+
+            {communeVide && (
+              <p className="text-xs text-red-600">
+                Le champ « Lieu de formation » est obligatoire.
+              </p>
+            )}
+            {!!communeFormation && !formationDansCOREL && (
+              <p className="text-xs text-amber-700">
+                Lieu hors COREL : non éligible aux conditions étudiantes.
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Si apprentissage, seul le <strong>lieu de l’apprentissage</strong> fait foi.
+            </p>
+          </div>
+
+          {/* Remplacement: pièce jointe du motif impérieux */}
+<div className="space-y-1">
+  <div className="text-sm font-medium">Motif impérieux — pièce jointe</div>
+  <FileUpload
+    value={motifImperieuxFile}
+    onChange={(file) => setValue('jeunesEtudiant.motifImperieuxFile', file as File | null)}
+    accept={["application/pdf", "image/jpeg", "image/png"]}
+    multiple={false}
+    disabled={false}
+  />
+
+  <p className="text-xs text-amber-700">
+    Le document doit être <strong>émis par un tiers</strong> (école, employeur, autorité),
+    <strong> pas par le demandeur</strong>.
+  </p>
+  {requiresMotifFile && !motifImperieuxFile && (
+    <p className="text-xs text-red-600">
+      En mode tout public, la pièce jointe du motif impérieux est obligatoire.
+    </p>
+  )}
+</div>
+
 
           {/* Mode tout public */}
           <div className="flex items-center gap-2">
@@ -185,24 +207,24 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
             </Label>
           </div>
 
-          {/* Motif impérieux si tout public */}
+          {/* Motif impérieux (texte) si tout public */}
           {toutPublic && (
             <div className="space-y-2">
-              <Label htmlFor="motifImperieux">Motif impérieux (à joindre)</Label>
+              <Label htmlFor="motifImperieux">Motif impérieux (description)</Label>
               <Textarea
                 id="motifImperieux"
-                placeholder="Expliquez le motif impérieux et mentionnez le justificatif joint."
+                placeholder="Expliquez brièvement le motif impérieux et mentionnez le justificatif joint."
                 value={motifImperieux ?? ''}
                 onChange={(e) => setValue('jeunesEtudiant.motifImperieux', e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Joignez le document justificatif correspondant à ce motif. Sans motif, la demande tout public est fragilisée.
+                Joignez le document justificatif correspondant à ce motif ci-dessus. Sans motif, la demande tout public est fragilisée.
               </p>
             </div>
           )}
         </div>
 
-        {/* Affichage du statut */}
+        {/* Badge éligibilité */}
         {isEligibleJeunes ? (
           <Badge className="bg-green-100 text-green-800 border-green-300">Éligible jeunes</Badge>
         ) : (
@@ -216,9 +238,12 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
             <p>Commune de formation: {communeFormation ?? 'N/A'}</p>
             <p>Dans COREL/Lausanne: {formationDansCOREL ? 'Oui' : 'Non'}</p>
             <p>Éligible jeunes: {isEligibleJeunes ? 'Oui' : 'Non'}</p>
+            <p>Motif impérieux fichier: {motifImperieuxFile ? 'Oui' : 'Non'}</p>
           </div>
         )}
       </CardContent>
     </Card>
   );
 }
+
+export default Step5JeunesEtudiant;

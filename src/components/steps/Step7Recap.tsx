@@ -68,6 +68,8 @@ export default function Step7Recap({ form, onSubmitted }: Props) {
     doc.save(`LLM-${ref}.pdf`);
   };
 
+  const pendingLater: PendingLater[] = form.watch("pendingLater") || [];
+
   const handleSubmit = () => {
     const { ref, at } = generateReference();
     setAck({ ref, at });
@@ -82,10 +84,13 @@ export default function Step7Recap({ form, onSubmitted }: Props) {
 
           {/* Vue d’ensemble */}
           <div className="space-y-2 text-sm">
+            <div>Date : <span className="font-medium">{new Date().toLocaleDateString()}</span></div>
             <div>Type de demande : <span className="font-medium">{household.typeDemande ?? "-"}</span></div>
-            <div>Ménage : <span className="font-medium">{household.nbAdults}</span> adultes, <span className="font-medium">{household.nbChildren}</span> enfants <span className="text-muted-foreground">( +{household.nbExcludedChildren} non comptés )</span></div>
-            <div>Membre non comptés (permis de séjour invalide) : <span className="font-medium">{household.nbExcludedByPermit}</span></div>
-            <div>Pièces max : <span className="font-medium">{String(household.piecesMaxRegle)}</span> pièces</div>
+            <div>Ménage : <span className="font-medium">{household.nbAdults}</span> adulte(s) et <span className="font-medium">{household.nbChildren}</span> enfant(s) <span className="text-muted-foreground">( +{household.nbExcludedChildren} non comptés )</span></div>
+            <div>Pièces max (prévisionnel) : <span className="font-medium">{String(household.piecesMaxRegle)}</span> pièces</div>
+            <div>Délai de traitement de <strong>30 jours ouvrables</strong></div>
+            <div><i>Une réponse vous sera adressée par voie postale dans un délai de 30 jours ouvrables.
+Il est donc inutile de visiter les logements à loyer modéré vacants sans avoir préalablement reçu notre réponse.</i></div>
           </div>
 
           <div role="separator" className="my-4 h-px w-full bg-border" />
@@ -93,23 +98,24 @@ export default function Step7Recap({ form, onSubmitted }: Props) {
           {/* Documents manquants */}
           <div className="grid md:grid-cols-3 gap-4">
             <div>
-              <h3 className="font-medium flex items-center gap-2"><AlertTriangle className="h-4 w-4" /> Bloquants</h3>
-              <ul className="mt-2 text-sm list-disc pl-4">
-                {missing.blockingDocs.length ? missing.blockingDocs.map((d) => <li key={d}>{d}</li>) : <li>—</li>}
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-medium">Warnings / info</h3>
+              <h3 className="font-medium">Avertissement</h3>
               <ul className="mt-2 text-sm list-disc pl-4">
                 {missing.warningDocs.length ? missing.warningDocs.map((d) => <li key={d}>{d}</li>) : <li>—</li>}
               </ul>
             </div>
             <div>
-              <h3 className="font-medium">Joindre plus tard</h3>
-              <ul className="mt-2 text-sm list-disc pl-4">
-                {missing.joinLater.length ? missing.joinLater.map((d) => <li key={d}>{d}</li>) : <li>—</li>}
-              </ul>
-            </div>
+  <h3 className="font-medium">Le(s) document(s) manquant(s)</h3>
+  <ul className="mt-2 text-sm list-disc pl-4">
+    {pendingLater.length
+      ? pendingLater.map((p, k) => (
+          <li key={k}>
+            {p.memberName} — {p.sourceLabel} : {p.label}
+          </li>
+        ))
+      : <li>—</li>}
+  </ul>
+</div>
+
           </div>
 
           {/* Validations critiques */}
