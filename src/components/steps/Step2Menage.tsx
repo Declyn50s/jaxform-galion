@@ -1218,6 +1218,17 @@ function computeStepValidations(members: any[]) {
 
   const isValid = blockingErrors.length === 0;
   return { blockingErrors, warnings, isValid, blockingIdx, invalidPaths };
+
+  if (['locataire / preneur', 'co-titulaire'].includes(m.role) && m.dateNaissance) {
+  const age = calcAge(m.dateNaissance);
+  if (age !== null && age < 18) {
+    mark(
+      idx,
+      'dateNaissance',
+      `${label} : un titulaire doit avoir au moins 18 ans (âge actuel : ${age}).`
+    );
+  }
+}
 }
 
 // ----------------- Helpers

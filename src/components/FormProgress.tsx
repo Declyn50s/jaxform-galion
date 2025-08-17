@@ -58,12 +58,7 @@ export function FormProgress({
             {stepList[safeCurrent - 1] || 'Finalisation'}
           </p>
         </div>
-
-        {testMode && (
-          <Badge variant="outline" className="bg-yellow-50 border-yellow-200">
-            Mode Test
-          </Badge>
-        )}
+         
       </div>
 
       <Progress

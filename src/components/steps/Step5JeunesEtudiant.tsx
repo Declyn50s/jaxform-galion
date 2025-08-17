@@ -1,5 +1,5 @@
 // src/components/steps/Step5JeunesEtudiant.tsx
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { UseFormReturn } from 'react-hook-form';
 import { FormData } from '@/types/form';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { FileUpload } from '@/components/FileUpload';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 
 // Helper pour calculer l’âge
 const calcAge = (birthDate?: string): number | null => {
@@ -52,23 +53,28 @@ const COREL_COMMUNES = [
 interface Step5JeunesEtudiantProps {
   form: UseFormReturn<FormData>;
   testMode?: boolean;
+  onValidityChange?: (blocked: boolean) => void;
+  showBlocking?: boolean;
 }
 
-export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps) {
+export function Step5JeunesEtudiant({
+  form,
+  testMode,
+  onValidityChange,
+  showBlocking = false,
+}: Step5JeunesEtudiantProps) {
   const { watch, setValue } = form;
 
   const typeDemande = watch('typeDemande');
-  const preneur = watch('members')?.find(m => m.role === 'locataire / preneur');
+  const preneur = watch('members')?.find((m) => m.role === 'locataire / preneur');
   const agePreneur = calcAge(preneur?.dateNaissance);
   const motifImperieuxFile = watch('jeunesEtudiant.motifImperieuxFile') as File | undefined;
-
 
   // Champs du formulaire
   const bourseOuRevenuMin = watch('jeunesEtudiant.bourseOuRevenuMin');
   const toutPublic = watch('jeunesEtudiant.toutPublic');
 
-
-  // Champ libre (lieu)
+  // Champ libre (lieu) + motif (texte)
   const communeFormation = watch('jeunesEtudiant.communeFormation') as string | undefined;
   const motifImperieux = watch('jeunesEtudiant.motifImperieux') as string | undefined;
 
@@ -76,13 +82,12 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
   const norm = (s: string) =>
     s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 
-  // formationDansCOREL basé sur le champ libre
   const formationDansCOREL = useMemo(() => {
     if (!communeFormation) return false;
     return COREL_COMMUNES.map(norm).includes(norm(communeFormation));
   }, [communeFormation]);
 
-  // Met à jour le flag legacy et hors-zone
+  // Met à jour des flags dérivés
   useEffect(() => {
     try {
       setValue('jeunesEtudiant.formationLausanne', formationDansCOREL as any);
@@ -95,30 +100,80 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
     } catch {}
   }, [formationDansCOREL, communeFormation, setValue]);
 
-  // Si mode tout public, on force certaines valeurs
+  // Tout public force formationLausanne à false
   useEffect(() => {
     if (toutPublic) {
       try {
-        // L'ancien champ statutEtudiant a été retiré
         setValue('jeunesEtudiant.formationLausanne', false);
       } catch {}
     }
   }, [toutPublic, setValue]);
 
   if (typeDemande !== 'Conditions étudiantes') return null;
-  if (agePreneur !== null && agePreneur >= 25) return null;
+  if (agePreneur !== null && (agePreneur < 18 || agePreneur >= 25)) return null;
 
-  // Eligibilité (le critère "statut étudiant" a été retiré)
+  // Eligibilité (indicative)
   const isEligibleJeunes =
-    !toutPublic &&
-    typeDemande === 'Conditions étudiantes' &&
-    agePreneur !== null &&
-    agePreneur < 25 &&
-    bourseOuRevenuMin &&
-    formationDansCOREL;
+  !toutPublic &&
+  typeDemande === 'Conditions étudiantes' &&
+  agePreneur !== null &&
+  agePreneur >= 18 &&
+  agePreneur < 25 &&
+  bourseOuRevenuMin &&
+  formationDansCOREL;
 
+  // ---------- VALIDATION BLOQUANTE ----------
   const communeVide = !communeFormation || !communeFormation.trim();
-  const requiresMotifFile = !!toutPublic; // on exige la pièce jointe en mode tout public
+
+  const errors = useMemo(() => {
+    const list: string[] = [];
+
+    // Champ lieu : toujours obligatoire
+    if (communeVide) {
+      list.push('Le champ « Lieu de formation » est obligatoire.');
+    }
+
+    if (!toutPublic) {
+      // Mode JEUNES : lieu doit être COREL + case bourse/revenu cochée
+      if (!communeVide && !formationDansCOREL) {
+        list.push('Le lieu de formation doit être dans la liste COREL/Lausanne.');
+      }
+      if (!bourseOuRevenuMin) {
+        list.push('Cochez « bourse et/ou revenu accessoire ≥ CHF 6’000/an ».');
+      }
+    } else {
+      // Mode TOUT PUBLIC : motif texte + pièce jointe obligatoires
+      if (!motifImperieux || !motifImperieux.trim()) {
+        list.push('Renseignez le motif impérieux (description).');
+      }
+      if (!motifImperieuxFile) {
+        list.push('Joignez le document du motif impérieux.');
+      }
+    }
+
+    return list;
+  }, [
+    communeVide,
+    formationDansCOREL,
+    bourseOuRevenuMin,
+    toutPublic,
+    motifImperieux,
+    motifImperieuxFile,
+  ]);
+
+  const isValid = errors.length === 0;
+
+  // Remontée de l’état au parent (App.tsx)
+  useEffect(() => {
+    onValidityChange?.(testMode ? false : !isValid);
+  }, [isValid, onValidityChange, testMode]);
+
+  // Contrôle d’affichage de l’alerte par le parent
+  const [showErrors, setShowErrors] = useState(false);
+  useEffect(() => {
+    if (showBlocking && !isValid) setShowErrors(true);
+    if (!showBlocking) setShowErrors(false);
+  }, [showBlocking, isValid]);
 
   return (
     <Card>
@@ -145,8 +200,10 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
           {/* Lieu de formation — champ texte libre */}
           <div className="space-y-1">
             <Label htmlFor="communeFormation">Lieu de la formation</Label>
-            <div className="flex items-center gap-2 rounded-xl border px-3 py-2 focus-within:ring-2 bg-white
-              border-input focus-within:ring-blue-500">
+            <div
+              className="flex items-center gap-2 rounded-xl border px-3 py-2 focus-within:ring-2 bg-white
+              border-input focus-within:ring-blue-500"
+            >
               <span aria-hidden>📍</span>
               <Input
                 id="communeFormation"
@@ -162,7 +219,7 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
                 Le champ « Lieu de formation » est obligatoire.
               </p>
             )}
-            {!!communeFormation && !formationDansCOREL && (
+            {!!communeFormation && !formationDansCOREL && !toutPublic && (
               <p className="text-xs text-amber-700">
                 Lieu hors COREL : non éligible aux conditions étudiantes.
               </p>
@@ -172,28 +229,26 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
             </p>
           </div>
 
-          {/* Remplacement: pièce jointe du motif impérieux */}
-<div className="space-y-1">
-  <div className="text-sm font-medium">Motif impérieux — pièce jointe</div>
-  <FileUpload
-    value={motifImperieuxFile}
-    onChange={(file) => setValue('jeunesEtudiant.motifImperieuxFile', file as File | null)}
-    accept={["application/pdf", "image/jpeg", "image/png"]}
-    multiple={false}
-    disabled={false}
-  />
+          {/* Motif impérieux — pièce jointe */}
+          <div className="space-y-1">
+            <div className="text-sm font-medium">Motif impérieux — pièce jointe</div>
+            <FileUpload
+  value={motifImperieuxFile ?? null}
+  onChange={(file) => setValue('jeunesEtudiant.motifImperieuxFile', file as File | null)}
+  accept="application/pdf,image/jpeg,image/png"
+  multiple={false}
+/>
 
-  <p className="text-xs text-amber-700">
-    Le document doit être <strong>émis par un tiers</strong> (école, employeur, autorité),
-    <strong> pas par le demandeur</strong>.
-  </p>
-  {requiresMotifFile && !motifImperieuxFile && (
-    <p className="text-xs text-red-600">
-      En mode tout public, la pièce jointe du motif impérieux est obligatoire.
-    </p>
-  )}
-</div>
-
+            <p className="text-xs text-amber-700">
+              Le document doit être <strong>émis par un tiers</strong> (école, employeur, autorité),
+              <strong> pas par le demandeur</strong>.
+            </p>
+            {toutPublic && !motifImperieuxFile && (
+              <p className="text-xs text-red-600">
+                En mode tout public, la pièce jointe du motif impérieux est obligatoire.
+              </p>
+            )}
+          </div>
 
           {/* Mode tout public */}
           <div className="flex items-center gap-2">
@@ -218,7 +273,7 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
                 onChange={(e) => setValue('jeunesEtudiant.motifImperieux', e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                Joignez le document justificatif correspondant à ce motif ci-dessus. Sans motif, la demande tout public est fragilisée.
+                Joignez le document justificatif correspondant à ce motif ci-dessus.
               </p>
             </div>
           )}
@@ -229,6 +284,35 @@ export function Step5JeunesEtudiant({ form, testMode }: Step5JeunesEtudiantProps
           <Badge className="bg-green-100 text-green-800 border-green-300">Éligible jeunes</Badge>
         ) : (
           <Badge variant="destructive">Non éligible jeunes</Badge>
+        )}
+
+        {/* Alerte erreurs agrégées (déclenchée par le parent) */}
+        {showErrors && errors.length > 0 && (
+          <div
+            className="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 p-4"
+            role="alert"
+            aria-live="assertive"
+          >
+            <div className="flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 mt-0.5" aria-hidden />
+              <div>
+                <p className="font-medium">Complétez les éléments suivants :</p>
+                <ul className="list-disc pl-5 space-y-1 mt-2 text-sm">
+                  {errors.map((err, i) => (
+                    <li key={i}>{err}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Indication prêt */}
+        {isValid && (
+          <div className="inline-flex items-center gap-1 text-sm text-green-700 mt-2">
+            <CheckCircle2 className="h-4 w-4" aria-hidden />
+            Tout est prêt pour continuer
+          </div>
         )}
 
         {/* Mode test */}

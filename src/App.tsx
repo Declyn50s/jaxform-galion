@@ -47,13 +47,15 @@ function App() {
   const [phase, setPhase] = useState<PhaseStep1>('type');
   const [showPrefilterErrors, setShowPrefilterErrors] = useState(false);
 
-  // Étapes bloquantes
+  // États de blocage/erreurs par étape
   const [step2Blocked, setStep2Blocked] = useState(true);
   const [step2ShowErrors, setStep2ShowErrors] = useState(false);
   const [step3Blocked, setStep3Blocked] = useState(true);
   const [step3ShowErrors, setStep3ShowErrors] = useState(false);
   const [step4Blocked, setStep4Blocked] = useState(true);
   const [step4ShowErrors, setStep4ShowErrors] = useState(false);
+  const [step5Blocked, setStep5Blocked] = useState(true);
+  const [step5ShowErrors, setStep5ShowErrors] = useState(false);
   const [step6Blocked, setStep6Blocked] = useState(true);
   const [step6ShowErrors, setStep6ShowErrors] = useState(false);
 
@@ -70,30 +72,29 @@ function App() {
   const preFiltering = form.watch('preFiltering');
   const members = form.watch('members') || [];
 
-  // 🔑 Préfiltrage valides
-  const habite = form.watch("preFiltering.habiteLausanne3Ans");
-  const travaille = form.watch("preFiltering.travailleLausanne3Ans");
+  // Préfiltrage
+  const habite = form.watch('preFiltering.habiteLausanne3Ans');
+  const travaille = form.watch('preFiltering.travailleLausanne3Ans');
   const isPreFilteringValid = testMode || (habite === true || travaille === true);
 
   // Flow étudiant = type "Conditions étudiantes" ET âge preneur < 25 (ou inconnu)
   const preneur = members.find((m: any) => m?.role === 'locataire / preneur');
   const preneurAge = preneur?.dateNaissance ? calcAge(preneur.dateNaissance) : null;
   const isStudentType = typeDemande === 'Conditions étudiantes';
-  const ageOk = preneurAge == null || preneurAge < 25;
+ const ageOk = preneurAge == null || (preneurAge >= 18 && preneurAge < 25);
   const isStudentFlow = isStudentType && ageOk;
 
-  // total dynamique (6 ou 7)
+  // Nombre d'étapes
   const totalSteps = isStudentFlow ? 7 : 6;
 
-  // Étape consentements (varie selon flow)
-  const isConsentStep =
-    (!isStudentFlow && currentStep === 5) ||
-    (isStudentFlow && currentStep === 6);
+  // Étape consentements (varie selon le flow)
+  const isConsentStep = (!isStudentFlow && currentStep === 5) || (isStudentFlow && currentStep === 6);
 
+  // Y a-t-il d'autres adultes ?
   const hasOtherAdults =
     (members || []).filter((m: any) => m?.dateNaissance && calcAge(m.dateNaissance) >= 18).length > 1;
 
-  // Sortir de la sous-phase et vider le préfiltrage si on quitte "Inscription"
+  // Sortie de sous-phase si on quitte "Inscription"
   useEffect(() => {
     if (typeDemande !== 'Inscription') {
       if (phase === 'prefilter') setPhase('type');
@@ -104,15 +105,11 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [typeDemande]);
 
-  // ✅ NAVIGATION SANS SAUTER L'INDEX 5
-  const nextStep = (cur: number) => {
-    const cap = isStudentFlow ? 7 : 6;
-    const n = Math.min(cur + 1, cap);
-    return n;
-  };
+  // Navigation
+  const nextStep = (cur: number) => Math.min(cur + 1, isStudentFlow ? 7 : 6);
   const prevStep = (cur: number) => Math.max(cur - 1, 1);
 
-  // Clamp si on dépasse la borne max en changeant de flow
+  // Clamp si le flow change
   useEffect(() => {
     const cap = isStudentFlow ? 7 : 6;
     if (currentStep > cap) {
@@ -121,22 +118,12 @@ function App() {
     }
   }, [isStudentFlow, currentStep, form]);
 
-  // Reset de l’affichage d’erreurs quand on (re)entre aux étapes
-  useEffect(() => {
-    if (currentStep === 2) setStep2ShowErrors(false);
-  }, [currentStep]);
-
-  useEffect(() => {
-    if (currentStep === 3) setStep3ShowErrors(false);
-  }, [currentStep]);
-
-  useEffect(() => {
-    if (currentStep === 4) setStep4ShowErrors(false);
-  }, [currentStep]);
-
-  useEffect(() => {
-    if (isConsentStep) setStep6ShowErrors(false);
-  }, [isConsentStep, currentStep]);
+  // Reset affichage d'erreurs en entrant sur les étapes
+  useEffect(() => { if (currentStep === 2) setStep2ShowErrors(false); }, [currentStep]);
+  useEffect(() => { if (currentStep === 3) setStep3ShowErrors(false); }, [currentStep]);
+  useEffect(() => { if (currentStep === 4) setStep4ShowErrors(false); }, [currentStep]);
+  useEffect(() => { if (currentStep === 5 && isStudentFlow) setStep5ShowErrors(false); }, [currentStep, isStudentFlow]);
+  useEffect(() => { if (isConsentStep) setStep6ShowErrors(false); }, [isConsentStep, currentStep]);
 
   // Next
   const handleNext = () => {
@@ -147,7 +134,7 @@ function App() {
             form.setValue('preFiltering', {
               habiteLausanne3Ans: undefined,
               travailleLausanne3Ans: undefined,
-              flagViaWork: false,
+              flagViaWork: false
             }, { shouldValidate: false, shouldDirty: true });
           }
           setPhase('prefilter');
@@ -170,36 +157,34 @@ function App() {
       return;
     }
 
-    // Étape 2 : bloquer si invalide, et n’afficher les erreurs qu’à ce moment
-    if (currentStep === 2) {
-      if (step2Blocked) {
-        setStep2ShowErrors(true);
-        return;
-      }
+    // Étape 2
+    if (currentStep === 2 && step2Blocked) {
+      setStep2ShowErrors(true);
+      return;
     }
 
     // Étape 3
-    if (currentStep === 3) {
-      if (step3Blocked) {
-        setStep3ShowErrors(true);
-        return;
-      }
+    if (currentStep === 3 && step3Blocked) {
+      setStep3ShowErrors(true);
+      return;
     }
 
-    // Étape 4 (Finances) : au moins une source par adulte + pas "tous sans revenu" + pièces OK
-    if (currentStep === 4) {
-      if (step4Blocked) {
-        setStep4ShowErrors(true);
-        return;
-      }
+    // Étape 4
+    if (currentStep === 4 && step4Blocked) {
+      setStep4ShowErrors(true);
+      return;
     }
 
-    // Étape consentements (step 5 ou 6 selon flow) : selfie + cases requises
-    if (isConsentStep) {
-      if (step6Blocked) {
-        setStep6ShowErrors(true);
-        return;
-      }
+    // Étape 5 (Jeunes/Étudiant) si flow étudiant
+    if (currentStep === 5 && isStudentFlow && step5Blocked) {
+      setStep5ShowErrors(true);
+      return;
+    }
+
+    // Étape consentements (5 ou 6)
+    if (isConsentStep && step6Blocked) {
+      setStep6ShowErrors(true);
+      return;
     }
 
     const n = nextStep(currentStep);
@@ -226,7 +211,6 @@ function App() {
       }
       return;
     }
-
     const p = prevStep(currentStep);
     setCurrentStep(p);
     form.setValue('currentStep', p);
@@ -238,19 +222,18 @@ function App() {
       setCurrentStep(1);
       setPhase('type');
       setShowPrefilterErrors(false);
-      setStep2ShowErrors(false);
-      setStep2Blocked(true);
-      setStep3ShowErrors(false);
-      setStep3Blocked(true);
-      setStep4ShowErrors(false);
-      setStep4Blocked(true);
-      setStep6ShowErrors(false);
-      setStep6Blocked(true);
+
+      setStep2ShowErrors(false); setStep2Blocked(true);
+      setStep3ShowErrors(false); setStep3Blocked(true);
+      setStep4ShowErrors(false); setStep4Blocked(true);
+      setStep5ShowErrors(false); setStep5Blocked(true);
+      setStep6ShowErrors(false); setStep6Blocked(true);
+
       if (userEmail) clearSavedData(userEmail);
     }
   };
 
-  // Rendu des étapes
+  // Rendu
   const renderCurrentStep = () => {
     if (currentStep === 1) {
       return (
@@ -304,7 +287,12 @@ function App() {
 
     if (currentStep === 5) {
       return isStudentFlow ? (
-        <Step5JeunesEtudiant form={form} testMode={testMode} />
+        <Step5JeunesEtudiant
+          form={form}
+          testMode={testMode}
+          onValidityChange={(blocked) => setStep5Blocked(testMode ? false : blocked)}
+          showBlocking={step5ShowErrors}
+        />
       ) : (
         <Step6Consentements
           hasOtherAdults={hasOtherAdults}
@@ -326,15 +314,15 @@ function App() {
       );
     }
 
-    if (currentStep === 7) return <Step7Recap form={form} testMode={testMode} />;
+    if (currentStep === 7) {
+      return <Step7Recap form={form} testMode={testMode} />;
+    }
 
     return (
       <Card>
         <CardContent className="p-8 text-center">
           <h2 className="text-2xl font-bold mb-4">Étape {currentStep}</h2>
-          <p className="text-muted-foreground mb-6">
-            Cette étape est en cours de développement.
-          </p>
+          <p className="text-muted-foreground mb-6">Cette étape est en cours de développement.</p>
           <Badge variant="outline">Prochainement disponible</Badge>
         </CardContent>
       </Card>
@@ -453,6 +441,8 @@ function App() {
                 <p>Affichage erreurs Étape 3: {step3ShowErrors ? 'Oui' : 'Non'}</p>
                 <p>Étape 4 bloquée: {step4Blocked ? 'Oui' : 'Non'}</p>
                 <p>Affichage erreurs Étape 4: {step4ShowErrors ? 'Oui' : 'Non'}</p>
+                <p>Étape 5 (Jeunes) bloquée: {step5Blocked ? 'Oui' : 'Non'}</p>
+                <p>Affichage erreurs Étape 5: {step5ShowErrors ? 'Oui' : 'Non'}</p>
                 <p>Étape 6 (Consentements) bloquée: {step6Blocked ? 'Oui' : 'Non'}</p>
                 <p>Affichage erreurs Étape 6: {step6ShowErrors ? 'Oui' : 'Non'}</p>
               </div>
