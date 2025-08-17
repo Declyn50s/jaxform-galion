@@ -12,6 +12,7 @@ export const SWISS_NPA: NpaMap = {
     '1010': ['Lausanne'],
     '1011': ['CHUV Lausanne'],
     '1012': ['Chailly Migros Lausanne'],
+    '1014': ['Lausanne VD'],
     '1015': ['Centre Universitaire Ecublens (VD)'],
     '1018': ['Lausanne'],
     '1020': ['Renens VD'],

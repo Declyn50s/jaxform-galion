@@ -1,7 +1,6 @@
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Trash2, Upload, X } from "lucide-react";
 
@@ -9,46 +8,14 @@ type FileLike = File;
 
 type Props =
   & {
-      /**
-       * MIME types acceptés (ex: "application/pdf" ou "application/pdf,image/png").
-       * Tu peux aussi passer des extensions (ex: ".pdf,.png")
-       */
-      accept?: string;
-      /**
-       * Autoriser plusieurs fichiers
-       */
+      accept?: string;           // ex: "application/pdf,image/*,.jpg,.jpeg,.png,.heic"
       multiple?: boolean;
-      /**
-       * Valeur contrôlée :
-       *  - single: File | null | undefined
-       *  - multiple: File[] | undefined
-       */
       value?: FileLike | FileLike[] | null;
-      /**
-       * onChange contrôlé :
-       *  - single: (file: File | null) => void
-       *  - multiple: (files: File[]) => void
-       */
       onChange: (next: any) => void;
-      /**
-       * Taille max d’UN fichier (en Mo). Par défaut 10.
-       */
       maxSizeMB?: number;
-      /**
-       * Désactivé
-       */
       disabled?: boolean;
-      /**
-       * Id pour l’input file (facultatif, sinon généré)
-       */
       id?: string;
-      /**
-       * Libellé du bouton
-       */
       buttonLabel?: string;
-      /**
-       * Message d’aide sous le bouton
-       */
       hint?: string;
     }
   & React.HTMLAttributes<HTMLDivElement>;
@@ -69,12 +36,11 @@ export function FileUpload({
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
-  // Normalisation : on fabrique TOUJOURS un tableau pour l’affichage interne,
-  // mais on renverra ce qu’attend le parent (single ou array).
+  // Toujours un tableau pour l’affichage
   const filesArray: FileLike[] = React.useMemo(() => {
     if (Array.isArray(value)) return value;
     if (value instanceof File) return [value];
-    return []; // null/undefined
+    return [];
   }, [value]);
 
   const openPicker = () => {
@@ -82,29 +48,76 @@ export function FileUpload({
     inputRef.current?.click();
   };
 
+  // --- Validation renforcée ---
+
+  // Normalise ".JPG" → ".jpg", "IMAGE/JPEG" → "image/jpeg"
+  const acceptTokens = React.useMemo(
+    () => (accept || "")
+      .split(",")
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean),
+    [accept]
+  );
+
+  // Alias MIME connus
+  const MIME_ALIASES: Record<string, string[]> = {
+    "image/jpeg": ["image/jpg", "image/pjpeg"],
+    "application/pdf": ["application/x-pdf", "application/acrobat"],
+    "image/heic": ["image/heif"], // iOS variantes
+  };
+
+  // Ext ↔ MIME basiques pour fallback
+  const EXT_TO_MIME: Record<string, string> = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".heic": "image/heic",
+    ".pdf": "application/pdf",
+  };
+
+  const hasWildcard = (t: string) => t.endsWith("/*");
+  const tokenMatches = (token: string, fileMime: string, fileName: string) => {
+    // 1) extension (".pdf", ".jpg", etc.)
+    if (token.startsWith(".")) {
+      return fileName.endsWith(token);
+    }
+    // 2) wildcard MIME ("image/*")
+    if (hasWildcard(token)) {
+      const prefix = token.slice(0, -1); // "image/"
+      return fileMime.startsWith(prefix);
+    }
+    // 3) MIME exact (avec alias)
+    if (fileMime === token) return true;
+    const aliases = MIME_ALIASES[token];
+    if (aliases?.includes(fileMime)) return true;
+    return false;
+  };
+
+  const pickFileExt = (name: string) => {
+    const m = name.toLowerCase().match(/\.[a-z0-9]+$/i);
+    return m ? m[0] : "";
+  };
+
   const validateOne = (f: FileLike): string | null => {
     // Taille
     if (f.size > maxSizeMB * 1024 * 1024) {
       return `Le fichier « ${f.name} » dépasse ${maxSizeMB} Mo.`;
     }
-    // Type (si accept utilise des extensions, on tolère ; sinon MIME strict)
-    if (accept) {
-      const accepts = accept.split(",").map((s) => s.trim().toLowerCase());
-      const name = f.name.toLowerCase();
-      const mime = f.type.toLowerCase();
 
-      const ok = accepts.some((a) => {
-        if (a.startsWith(".")) {
-          // extension
-          return name.endsWith(a);
-        }
-        // mime
-        return mime === a || (a.endsWith("/*") && mime.startsWith(a.replace("/*", "/")));
-      });
+    if (acceptTokens.length === 0) return null; // rien à filtrer
 
-      if (!ok) {
-        return `Type non accepté pour « ${f.name} ». Types autorisés : ${accepts.join(", ")}`;
-      }
+    const fileName = f.name.toLowerCase();
+    const fileMimeRaw = (f.type || "").toLowerCase();
+    const fileExt = pickFileExt(fileName);
+
+    // Si pas de MIME fourni par le navigateur → essaie d’inférer par l’extension
+    const inferredMime = fileMimeRaw || EXT_TO_MIME[fileExt] || "";
+
+    // Si l’un des tokens matche par ext OU par MIME (y compris wildcard/alias), c’est OK.
+    const ok = acceptTokens.some(token => tokenMatches(token, inferredMime, fileName));
+
+    if (!ok) {
+      return `Type non accepté pour « ${f.name} ». Types autorisés : ${acceptTokens.join(", ")}`;
     }
     return null;
   };
@@ -115,50 +128,36 @@ export function FileUpload({
     if (!list || list.length === 0) return;
 
     const picked = Array.from(list);
-    // validations
+
     for (const f of picked) {
       const err = validateOne(f);
       if (err) {
         setError(err);
-        // ne met pas à jour la valeur si un fichier est invalide
-        // (si tu préfères filtrer les mauvais et garder les bons, adapte ici)
-        // On reset l'input pour autoriser re-pick du même nom
-        e.target.value = "";
+        e.target.value = ""; // permet de re-choisir le même nom
         return;
       }
     }
 
     if (multiple) {
-      // cumul avec existants
-      const next = [...filesArray, ...picked];
-      onChange(next);
+      onChange([...(filesArray || []), ...picked]);
     } else {
-      // single : on en prend un seul
       onChange(picked[0] ?? null);
     }
 
-    // reset pour pouvoir re-sélectionner le même fichier
     e.target.value = "";
   };
 
   const removeAt = (idx: number) => {
-    if (!multiple) {
-      onChange(null);
-      return;
-    }
+    if (!multiple) { onChange(null); return; }
     const next = [...filesArray];
     next.splice(idx, 1);
     onChange(next);
   };
 
-  const clearAll = () => {
-    if (multiple) onChange([]);
-    else onChange(null);
-  };
+  const clearAll = () => { multiple ? onChange([]) : onChange(null); };
 
   const totalSize = filesArray.reduce((acc, f) => acc + (f?.size || 0), 0);
   const prettySize = formatBytes(totalSize);
-
   const inputId = id || React.useId();
 
   return (
@@ -197,11 +196,7 @@ export function FileUpload({
         )}
       </div>
 
-      {hint && (
-        <p className="text-xs text-muted-foreground mt-1">
-          {hint}
-        </p>
-      )}
+      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
 
       {error && (
         <Alert variant="destructive" className="mt-2">
@@ -209,7 +204,6 @@ export function FileUpload({
         </Alert>
       )}
 
-      {/* Liste détaillée en mode multiple */}
       {multiple && filesArray.length > 0 && (
         <div className="mt-2 space-y-2">
           {filesArray.map((f, i) => (

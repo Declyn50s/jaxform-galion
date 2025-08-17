@@ -122,23 +122,6 @@ export function buildMissingDocs(formData: FormData): {
 }
 
 /**
- * Normalize income to monthly CHF (integer, including 13th salary)
- */
-export function normalizeIncome(
-  montantMensuel: number, 
-  has13eSalaire: boolean = false, 
-  montant13e: number = 0
-): number {
-  let total = Math.round(montantMensuel);
-  
-  if (has13eSalaire && montant13e > 0) {
-    total += Math.round(montant13e / 12);
-  }
-  
-  return total;
-}
-
-/**
  * Check if commune is in COREL region
  */
 export function isCorelCommune(commune: string): boolean {
@@ -147,55 +130,101 @@ export function isCorelCommune(commune: string): boolean {
 
 /**
  * Calculate maximum pieces for household
+ * Règle "droit de visite" :
+ * - 1 enfant mineur en droit de visite => 0 pièce en plus
+ * - >=2 enfants mineurs en droit de visite => +1 pièce (maximum, unique)
+ * Les enfants en droit de visite ne sont pas comptés comme "enfants" résidents.
  */
 export function calculateMaxPieces(members: any[]): number {
-  const validMembers = members.filter((m) => {
-    // Non-Suisses : permis string + restriction
-    const isSwiss = m?.nationalite?.iso === 'CH';
+  // === Définition "enfant à charge" ===
+  // - < 25 ans OU enfant à naître (si certificat)
+  const isDependentChild = (m: any): boolean => {
+    if (m.role === 'enfantANaître') return true;
+    if (!m.dateNaissance) return false;
+    return calcAge(m.dateNaissance) < 25;
+  };
 
+  // Aligner avec les valeurs produites par l'UI (Step2Menage):
+  // situationEnfant ∈ {"droitDeVisite","gardePartagee"}
+  const isVisitation = (m: any): boolean => {
+    const v = m?.situationEnfant?.toLowerCase?.() || '';
+    // "droitDeVisite" → "droitdevisite"
+    return v === 'droitdevisite' || v === 'droit_de_visite' || v === 'droit-de-visite';
+  };
+
+  const isSharedCustody = (m: any): boolean => {
+    const v = m?.situationEnfant?.toLowerCase?.() || '';
+    // "gardePartagee" → "gardepartagee"
+    return v === 'gardepartagee' || v === 'garde_partagee' || v === 'garde-partagee';
+  };
+
+  // --- Filtre membres valides + exclusions posées par l'UI ---
+  const validMembers = members.filter((m) => {
+    if (m?._excludedForPieces) return false; // ex: homme seul sans justificatif
+
+    const isSwiss = m?.nationalite?.iso === 'CH';
     if (!isSwiss) {
-      const validPermits = ['Permis C','Permis B','Permis F'];
-      if (!validPermits.includes(m?.permis || '')) return false; // permis invalide
-      if (['Permis B','Permis F'].includes(m.permis)) {
-        if (!m.permisExpiration) return false;                   // pas de date
-        if (new Date(m.permisExpiration) < new Date()) return false; // expiré
+      const validPermits = ['Permis C', 'Permis B', 'Permis F'];
+      if (!validPermits.includes(m?.permis || '')) return false;
+      if (['Permis B', 'Permis F'].includes(m.permis)) {
+        if (!m.permisExpiration) return false;
+        if (new Date(m.permisExpiration) < new Date()) return false;
       }
     }
 
-    // Enfant à naître : compter seulement si certificat présent (conforme à ton UI)
-    if (m.role === 'enfantANaître') {
-      return !!m.certificatGrossesse;
-    }
-
+    if (m.role === 'enfantANaître') return !!m.certificatGrossesse; // enfant à naître seulement si certificat
     return true;
   });
 
-  const adults = validMembers.filter((m) => {
+  // --- Comptages sur la base "enfant à charge" (<25) ---
+  // Enfants en visite/partagée sont "enfants" uniquement s'ils sont <25
+  const visitingDependentChildren = validMembers.filter(
+    (m) => isDependentChild(m) && isVisitation(m)
+  ).length;
+
+  const hasSharedCustodyDependent = validMembers.some(
+    (m) => isDependentChild(m) && isSharedCustody(m)
+  );
+
+  // Membres base = on exclut seulement les enfants <25 en "visite"
+  const baseMembers = validMembers.filter(
+    (m) => !(isDependentChild(m) && isVisitation(m))
+  );
+
+  // Adultes = >= 18 (inchangé)
+  const adults = baseMembers.filter((m) => {
     if (!m.dateNaissance && (m.role === 'locataire / preneur' || m.role === 'co-titulaire')) return true;
     return m.dateNaissance ? calcAge(m.dateNaissance) >= 18 : false;
   }).length;
 
-  const children = validMembers.filter((m) => {
-    if (m.role === 'enfantANaître') return true;
-    return m.dateNaissance ? calcAge(m.dateNaissance) < 18 : false;
-  }).length;
+  // Enfants pour le barème = enfants à charge (<25) résidents + enfant à naître (si certif)
+  const residentChildren = baseMembers.filter((m) => isDependentChild(m)).length;
 
-  // Règles spéciales (garde ta logique si tu as des flags ailleurs)
+  // Ta règle : si (≥2 en visite) OU (≥1 en garde partagée) ⇒ on traite comme children === 1 (min 1)
+  let childrenForScale = residentChildren;
+  if (visitingDependentChildren >= 2 || hasSharedCustodyDependent) {
+    childrenForScale = Math.max(childrenForScale, 1);
+  }
+
+  // Cas preneur < 25 ans (inchangé)
   const preneur = members.find((x) => x.role === 'locataire / preneur');
   const preneurYoung = preneur?.dateNaissance ? calcAge(preneur.dateNaissance) < 25 : false;
 
-  // Standard (tes paliers)
-  if (adults === 1 && children === 0) return preneurYoung ? 1.5 : 2.5;
-  if (adults === 2 && children === 0) return 3.5;
-  if (adults === 2 && children === 1) return 3.5;
-  if (adults === 2 && children === 2) return 4.5;
-  if (adults === 2 && children >= 3) return 5.5;
-  if (adults === 1 && children === 1) return 3.5;
-  if (adults === 1 && children === 2) return 4.5;
-  if (adults === 1 && children >= 3) return 5.5;
+  // Barème inchangé mais appliqué sur childrenForScale
+  let basePieces: number;
+  if (adults === 1 && childrenForScale === 0) basePieces = preneurYoung ? 1.5 : 2.5;
+  else if (adults === 2 && childrenForScale === 0) basePieces = 3.5;
+  else if (adults === 2 && childrenForScale === 1) basePieces = 3.5;
+  else if (adults === 2 && childrenForScale === 2) basePieces = 4.5;
+  else if (adults === 2 && childrenForScale >= 3) basePieces = 5.5;
+  else if (adults === 1 && childrenForScale === 1) basePieces = 3.5;
+  else if (adults === 1 && childrenForScale === 2) basePieces = 4.5;
+  else if (adults === 1 && childrenForScale >= 3) basePieces = 5.5;
+  else basePieces = 2.5;
 
-  return 2.5;
+  return basePieces; // pas de bonus visite additionnel
 }
+
 
 export function isHommeSeul(members: any[]): boolean {
   const titulaires = members.filter((m: any) =>

@@ -20,8 +20,12 @@ import { Camera, Upload, Trash2, CheckCircle2, AlertCircle, Mail } from "lucide-
  */
 export default function Step6Consentements({
   hasOtherAdults = false,
+  onValidityChange,
+  showBlocking = false,
 }: {
   hasOtherAdults?: boolean;
+  onValidityChange?: (blocked: boolean) => void;
+  showBlocking?: boolean;
 }) {
   // Selfie
   const [selfieFile, setSelfieFile] = useState<File | null>(null);
@@ -65,6 +69,14 @@ export default function Step6Consentements({
   }, [selfieFile, certExactitude, accesRDU, accordAutresAdultes, hasOtherAdults]);
 
   const isValid = errors.length === 0;
+
+  useEffect(() => {
+  onValidityChange?.(!isValid);
+}, [isValid, onValidityChange]);
+
+useEffect(() => {
+  if (showBlocking && !isValid) setShowErrors(true);
+}, [showBlocking, isValid]);
 
   // Fichier
   const onPickFile = () => fileInputRef.current?.click();

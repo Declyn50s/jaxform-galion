@@ -4,8 +4,11 @@ import { calcAge, isHommeSeul, calculateMaxPieces } from "@/lib/helpers";
 
 // -------------------- Types de sortie
 export type MissingDocs = {
-  warningDocs: string[];    // Manquants informatifs / pouvant exclure
+  warningDocs: string[];    // Manquants informatifs / pouvant exclure (hors permis)
   joinLater: string[];      // Tous les "Joindre plus tard"
+  blockingDocs: string[];   // Manquants bloquants (si tu veux en distinguer)
+  // Bloc "Information — titres de séjour"
+  permitNotice?: { notice: string; lines: string[] } | null;
 };
 
 export type CriticalResult = {
@@ -43,10 +46,13 @@ const isPermitValidForMember = (m: any): boolean => {
     const exp = new Date(m.permisExpiration);
     const today = new Date();
     exp.setHours(0,0,0,0); today.setHours(0,0,0,0);
+    if (Number.isNaN(exp.getTime())) return false;
     if (exp < today) return false;
   }
   return true;
 };
+
+const isValidIsoDate = (s?: string) => !!s && !Number.isNaN(new Date(s).getTime());
 
 // -------------------- 1) Récap ménage + application des règles "pièces"
 export function computeHouseholdSummary(data: any): HouseholdSummary {
@@ -96,53 +102,118 @@ export function computeTaxationRequirement(data: any): TaxationRequirement {
   return "optional";
 }
 
-// -------------------- 3) Revenu mensuel estimé (incl. 13e si déclaré par source)
-export function computeEstimatedMonthlyIncome(data: FormData): number {
-  // Hypothèse: data.finances = [{ netMensuel?: number, has13e?: boolean }, ...]
-  const items: any[] = (data as any)?.finances ?? [];
-  let total = 0;
-  for (const f of items) {
-    const net = Number(f?.netMensuel ?? 0);
-    const has13e = !!f?.has13e;
-    const monthly = has13e ? net + net / 12 : net;
-    total += monthly;
-  }
-  return Math.round(total);
+// -------------------- 3) Revenu mensuel estimé (ancien modèle avec montants)
+/** @deprecated Plus de montants saisis ; renvoie 0. Préférer computeIncomeDeclarationStatus. */
+export function computeEstimatedMonthlyIncome(_data: FormData): number {
+  return 0;
 }
 
-// -------------------- 4) Documents manquants (aligné Step2)
+/** Statut de déclaration de revenus par adulte (sans montants). */
+export function computeIncomeDeclarationStatus(data: FormData): {
+  totalAdults: number;
+  adultsWithAnySource: number;
+  adultsOnlySansRevenu: number;
+} {
+  const members: any[] = (data as any)?.members ?? [];
+  const finances: any[] = (data as any)?.finances ?? [];
+
+  const adults = members
+    .map((m, i) => ({ m, i }))
+    .filter(({ m }) => isAdult(m) && isPermitValidForMember(m));
+
+  const setByIdx = new Map<number, Set<string>>();
+  for (const f of finances) {
+    const idx = Number.isInteger(f?.memberIndex) ? (f.memberIndex as number) : null;
+    const src = typeof f?.source === "string" ? (f.source as string) : null;
+    if (idx === null || !src) continue;
+    const s = setByIdx.get(idx) ?? new Set<string>();
+    s.add(src);
+    setByIdx.set(idx, s);
+  }
+
+  let adultsWithAnySource = 0;
+  let adultsOnlySansRevenu = 0;
+  for (const { i } of adults) {
+    const s = setByIdx.get(i);
+    if (s && s.size > 0) {
+      adultsWithAnySource++;
+      if ([...s].every((x) => x === "sans_revenu")) adultsOnlySansRevenu++;
+    }
+  }
+
+  return {
+    totalAdults: adults.length,
+    adultsWithAnySource,
+    adultsOnlySansRevenu,
+  };
+}
+
+// -------------------- 4) Documents manquants (avec bloc "Information — titres de séjour")
 export function buildMissingDocs(data: FormData): MissingDocs {
   const members: any[] = (data?.members ?? []) as any[];
   const warningDocs: string[] = [];
   const joinLater: string[] = [];
+  const blockingDocs: string[] = []; // on laisse vide par défaut
+
+  // Bloc Information — titres de séjour
+  const permitNoticeLines: string[] = [];
+  let hasPermitPolicyRisk = false;
+
+  const MS_IN_DAY = 24 * 60 * 60 * 1000;
+  const DAYS_THRESHOLD = 60; // ~2 mois
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   for (const m of members) {
     const label = [m?.prenom, m?.nom].filter(Boolean).join(" ") || "Membre";
 
+    // Papiers d'identité pour tous (hors enfant à naître)
     if (m.role !== 'enfantANaître') {
-      // Pièce d'identité (Suisse ET étrangers)
       if (!m?.pieceIdentite) {
         warningDocs.push(`Papiers d’identité manquants — ${label}`);
       }
+    }
 
-      // Non-CH → permis + scan + expiration si B/F
-      if (m?.nationalite?.iso !== 'CH') {
-        if (!['Permis C', 'Permis B', 'Permis F'].includes(m?.permis || '')) {
-          warningDocs.push(`Permis non reconnu pour ${label} — membre potentiellement exclu`);
-        } else {
-          if ((m.permis === 'Permis B' || m.permis === 'Permis F')) {
-            if (!m?.permisExpiration) {
-              warningDocs.push(`Date d’expiration du ${m.permis} manquante — ${label}`);
+    // Politique permis : uniquement non-CH
+    const isSwiss = m?.nationalite?.iso === "CH";
+    if (!isSwiss) {
+      const permis = m?.permis || "";
+      const known = ["Permis C", "Permis B", "Permis F"].includes(permis);
+
+      if (!known) {
+        // type non reconnu ⇒ information
+        hasPermitPolicyRisk = true;
+        permitNoticeLines.push(`${label} — type de permis non reconnu.`);
+      } else {
+        // scan recommandé pour information générale
+        if (!m?.permisScan) {
+          warningDocs.push(`Scan du titre de séjour (${permis}) manquant — ${label}`);
+        }
+
+        // B/F : expiration requise → applique la politique < 2 mois
+        if (permis === "Permis B" || permis === "Permis F") {
+          const expStr = m?.permisExpiration;
+          const exp = expStr ? new Date(expStr) : null;
+
+          if (!exp || Number.isNaN(exp.getTime())) {
+            hasPermitPolicyRisk = true;
+            permitNoticeLines.push(`${label} — ${permis}: date d’expiration manquante ou invalide.`);
+          } else {
+            exp.setHours(0, 0, 0, 0);
+            const deltaDays = Math.round((exp.getTime() - today.getTime()) / MS_IN_DAY);
+            if (exp < today) {
+              hasPermitPolicyRisk = true;
+              permitNoticeLines.push(`${label} — ${permis} expiré le ${exp.toLocaleDateString()}.`);
+            } else if (deltaDays < DAYS_THRESHOLD) {
+              hasPermitPolicyRisk = true;
+              permitNoticeLines.push(`${label} — ${permis} arrive à échéance dans ${deltaDays} jour(s) (${exp.toLocaleDateString()}).`);
             }
-          }
-          if (!m?.permisScan) {
-            warningDocs.push(`Scan du titre de séjour (${m.permis}) manquant — ${label}`);
           }
         }
       }
     }
 
-    // État civil (adultes)
+    // Adultes — état civil
     if (isAdult(m)) {
       if (['Divorcé·e', 'Séparé·e', 'Part. dissous'].includes(m?.etatCivil)) {
         if (m?.justificatifEtatCivilLater) {
@@ -152,7 +223,6 @@ export function buildMissingDocs(data: FormData): MissingDocs {
         }
       }
       if (m?.etatCivil === 'Marié·e') {
-        // cas "personne seule" = 1 seul titulaire/co-titulaire
         const titulaires = members.filter((x: any) =>
           ['locataire / preneur', 'co-titulaire'].includes(x.role)
         );
@@ -178,7 +248,22 @@ export function buildMissingDocs(data: FormData): MissingDocs {
     }
   }
 
-  // Règle “homme seul + enfant(s)” → convention/jugement requis pour chaque enfant
+  const permitNotice = hasPermitPolicyRisk
+    ? {
+        notice:
+`Pas de dossier accepté si le permis expire dans moins de 2 mois.
+Seules les personnes avec un permis valable plus de 2 mois peuvent déposer une demande.
+
+Exemple simple :
+Personne 1 a un permis valable → son dossier est traité, logement max. 2,5 pièces.
+Personne 2 n’a pas de permis valable → elle n’est pas prise en compte.
+Quand Personne 2 aura un permis renouvelé → le couple pourra demander un logement 3,5 pièces.
+⚠️ Une attestation de renouvellement n’est pas valable.`,
+        lines: permitNoticeLines,
+      }
+    : null;
+
+  // Règle “homme seul + enfant(s)” → conventions/jugements
   if (isHommeSeul(members)) {
     for (const m of members) {
       if (m?.role === 'enfant') {
@@ -193,7 +278,7 @@ export function buildMissingDocs(data: FormData): MissingDocs {
     }
   }
 
-  return { warningDocs, joinLater };
+  return { warningDocs, joinLater, blockingDocs, permitNotice };
 }
 
 // -------------------- 5) Validations critiques (refus bloquants)
@@ -202,10 +287,10 @@ export function runCriticalValidations(data: FormData): CriticalResult {
   const fieldErrors: string[] = [];
 
   const members: any[] = (data?.members ?? []) as any[];
-  const preneur: any = members.find((m: any) => m?.role === 'locataire / preneur');
+  const preneur: any = members.find((m: any) => m?.role === "locataire / preneur");
 
   if (preneur) {
-    // Preneur mineur → refus (sauf si tu gères un doc d’émancipation ailleurs)
+    // Preneur mineur → refus (sauf émancipation gérée ailleurs)
     if (preneur?.dateNaissance && calcAge(preneur.dateNaissance) < 18) {
       refus.push("Preneur·euse < 18 ans (émancipation requise).");
     }
@@ -215,14 +300,38 @@ export function runCriticalValidations(data: FormData): CriticalResult {
     }
   }
 
-  // Tous les adultes (validés) sans revenu déclaré → refus
-  // Hypothèse simple: chaque finance item correspond à un adulte; ajuste selon ton schéma si besoin.
-  const adults = members.filter((m) => isAdult(m) && isPermitValidForMember(m));
-  const hasAnyIncome =
-    Array.isArray((data as any)?.finances) &&
-    (data as any).finances.some((f: any) => Number(f?.netMensuel || 0) > 0);
-  if (adults.length > 0 && !hasAnyIncome) {
-    refus.push("Tous les adultes sont sans revenu déclaré.");
+  // === Règles finances : basées UNIQUEMENT sur les sources, pas sur des montants ===
+  const adults = members
+    .map((m, i) => ({ m, i }))
+    .filter(({ m }) => isAdult(m) && isPermitValidForMember(m));
+
+  // Map<memberIndex, Set<sources>>
+  const finances: any[] = Array.isArray((data as any)?.finances) ? (data as any).finances : [];
+  const sourcesByAdult = new Map<number, Set<string>>();
+  for (const f of finances) {
+    const idx = Number.isInteger(f?.memberIndex) ? (f.memberIndex as number) : null;
+    const src = typeof f?.source === "string" ? (f.source as string) : null;
+    if (idx === null || !src) continue;
+    const set = sourcesByAdult.get(idx) ?? new Set<string>();
+    set.add(src);
+    sourcesByAdult.set(idx, set);
+  }
+
+  if (adults.length > 0) {
+    // 1) Aucune source renseignée pour tous les adultes → refus
+    const everyAdultMissingSource = adults.every(({ i }) => (sourcesByAdult.get(i)?.size ?? 0) === 0);
+    if (everyAdultMissingSource) {
+      refus.push("Aucune source de revenu renseignée pour les adultes.");
+    }
+
+    // 2) Tous les adultes uniquement "sans_revenu" → refus
+    const allSansRevenu = adults.every(({ i }) => {
+      const set = sourcesByAdult.get(i);
+      return set && set.size > 0 && [...set].every((s) => s === "sans_revenu");
+    });
+    if (allSansRevenu) {
+      refus.push("Tous les adultes sont déclarés sans revenu.");
+    }
   }
 
   return { refus, fieldErrors };

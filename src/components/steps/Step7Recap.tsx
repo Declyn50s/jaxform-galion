@@ -4,9 +4,9 @@ import { UseFormReturn } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator"; // <- manquant
-import { jsPDF } from "jspdf";                          // <- manquant
-import { AlertTriangle, CheckCircle2, Send, FileDown } from "lucide-react"; // <- manquant
+// import { Separator } from "@/components/ui/separator"; // pas utilisé
+import { jsPDF } from "jspdf";
+import { CheckCircle2, Send, FileDown } from "lucide-react"; // AlertTriangle pas utilisé
 
 import { FormData } from "@/types/form";
 import {
@@ -16,6 +16,13 @@ import {
   buildRefusalSuggestions,
   generateReference
 } from "@/lib/recap";
+
+// Type local minimal pour pendingLater (extrait de Step4Finances)
+type PendingLaterItem = {
+  memberName: string;
+  sourceLabel: string;
+  label: string;
+};
 
 type Props = {
   form: UseFormReturn<FormData>;
@@ -27,48 +34,147 @@ export default function Step7Recap({ form, onSubmitted }: Props) {
   const [ack, setAck] = useState<{ ref: string; at: string } | null>(null);
 
   const household = useMemo(() => computeHouseholdSummary(data), [data]);
-  const missing = useMemo(() => buildMissingDocs(data), [data]);
+  const missingRaw = useMemo(() => buildMissingDocs(data), [data]);
   const critical = useMemo(() => runCriticalValidations(data), [data]);
 
-  const canSubmit = critical.refus.length === 0 && (missing.blockingDocs.length === 0);
-
-  const handleDownloadPdf = (ref: string, at: string) => {
-    const doc = new jsPDF();
-
-    doc.setFontSize(14);
-    doc.text("Récapitulatif de la demande LLM", 14, 18);
-    doc.setFontSize(10);
-    doc.text(`Référence: ${ref}`, 14, 26);
-    doc.text(`Soumis le: ${at}`, 14, 32);
-
-    let y = 42;
-
-    const addSection = (title: string) => {
-      doc.setFontSize(12);
-      doc.text(title, 14, y);
-      y += 6;
-      doc.setFontSize(10);
-    };
-
-    addSection("Vue d’ensemble");
-    doc.text(`Type de demande: ${household.typeDemande ?? "-"}`, 20, y); y += 5;
-    doc.text(`Ménage: ${household.nbAdults} adultes, ${household.nbChildren} enfants (+${household.nbExcludedChildren} non comptés)`, 20, y); y += 5;
-    doc.text(`Exclus (permis): ${household.nbExcludedByPermit}`, 20, y); y += 5;
-    doc.text(`Pièces max (règle): ${household.piecesMaxRegle}`, 20, y); y += 5;
-
-    addSection("Documents manquants");
-    doc.text(`Bloquants: ${missing.blockingDocs.length ? missing.blockingDocs.join(", ") : "—"}`, 20, y); y += 5;
-    doc.text(`Warnings: ${missing.warningDocs.length ? missing.warningDocs.join(", ") : "—"}`, 20, y); y += 5;
-    doc.text(`Joindre plus tard: ${missing.joinLater.length ? missing.joinLater.join(", ") : "—"}`, 20, y); y += 8;
-
-    addSection("Validations critiques");
-    doc.text(`Refus: ${critical.refus.length ? critical.refus.join(" | ") : "—"}`, 20, y); y += 5;
-    doc.text(`Erreurs de champ: ${critical.fieldErrors.length ? critical.fieldErrors.join(" | ") : "—"}`, 20, y); y += 8;
-
-    doc.save(`LLM-${ref}.pdf`);
+  // Gardes robustes (évite les "cannot read length of undefined")
+  const missing = {
+    warningDocs: missingRaw?.warningDocs ?? [],
+    joinLater:   missingRaw?.joinLater ?? [],
+    blockingDocs: missingRaw?.blockingDocs ?? [],
+    permitNotice: missingRaw?.permitNotice ?? null,
   };
 
-  const pendingLater: PendingLater[] = form.watch("pendingLater") || [];
+  const canSubmit = critical.refus.length === 0 && missing.blockingDocs.length === 0;
+
+  // Remplace les espaces fines/insécables et ponctuation “smart” par des équivalents sûrs pour jsPDF
+const sanitizePdfText = (s: string) =>
+  (s ?? "")
+    // espaces spéciales -> espace normal
+    .replace(/[\u202F\u2009\u00A0]/g, " ")
+    // apostrophes / guillemets typographiques -> ASCII
+    .replace(/[\u2019\u2032]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    // tirets en/em -> tiret simple
+    .replace(/[\u2013\u2014]/g, "-")
+    // guillemets français -> "
+    .replace(/[\u00AB\u00BB]/g, '"');
+
+const handleDownloadPdf = (ref: string, at: string) => {
+  const doc = new jsPDF();
+  doc.setFont("arial", "normal");
+  const margin = 14;
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const contentWidth = pageWidth - margin * 2;
+  const pageBottom = 280; // approx pour A4 en unités jsPDF par défaut
+  let y = 18;
+
+  const newPage = () => {
+    doc.addPage();
+    y = 18;
+  };
+
+  const ensureSpace = (needed = 6) => {
+    if (y + needed > pageBottom) newPage();
+  };
+
+  const addTitle = (txt: string) => {
+    ensureSpace(10);
+    doc.setFontSize(14);
+    doc.text(txt, margin, y);
+    y += 8;
+  };
+
+  const addSection = (title: string) => {
+    ensureSpace(10);
+    doc.setFontSize(12);
+    doc.text(title, margin, y);
+    y += 6;
+    doc.setFontSize(10);
+  };
+
+  const addParagraph = (text: string) => {
+    const lines = doc.splitTextToSize(text, contentWidth);
+    for (const line of lines) {
+      ensureSpace(6);
+      doc.text(line, margin, y);
+      y += 5;
+    }
+    y += 2;
+  };
+
+  const addBullets = (items: string[]) => {
+    for (const item of items) {
+      const lines = doc.splitTextToSize(`• ${item}`, contentWidth);
+      for (const line of lines) {
+        ensureSpace(6);
+        doc.text(line, margin, y);
+        y += 5;
+      }
+    }
+  };
+
+  // --- En-tête
+  addTitle("Récapitulatif de la demande LLM");
+  doc.setFontSize(10);
+  doc.text(`Référence: ${ref}`, margin, y); y += 6;
+  doc.text(`Soumis le: ${at}`, margin, y); y += 10;
+
+  // --- Vue d’ensemble
+  addSection("Vue d’ensemble");
+  addParagraph(`Type de demande: ${household.typeDemande ?? "-"}`);
+  addParagraph(`Ménage: ${household.nbAdults} adultes, ${household.nbChildren} enfants (+${household.nbExcludedChildren} non comptés)`);
+  addParagraph(`Exclus (permis): ${household.nbExcludedByPermit}`);
+  addParagraph(`Pièces max (règle): ${String(household.piecesMaxRegle)}`);
+
+  // --- Avertissements
+  addSection("Avertissements");
+
+  // Bloc Information — titres de séjour (si présent)
+  if (missing.permitNotice) {
+    // sous-titre
+    doc.setFont("arial", "bold");
+    addParagraph("Information — titres de séjour");
+    doc.setFont("arial", "normal");
+
+    // notice
+    addParagraph(missing.permitNotice.notice);
+
+    // détails par personne (lignes)
+    if (missing.permitNotice.lines?.length) {
+      addBullets(missing.permitNotice.lines);
+    }
+  }
+
+  // Autres avertissements
+  if (missing.warningDocs.length) {
+    addBullets(missing.warningDocs);
+  } else {
+    addParagraph("—");
+  }
+
+  // --- Documents manquants à joindre plus tard
+  addSection("Documents manquants à joindre");
+  const pendingLater: PendingLaterItem[] = form.watch("pendingLater") || [];
+  if (pendingLater.length) {
+    addBullets(
+      pendingLater.map(p => `${p.memberName} — ${p.sourceLabel} : ${p.label}`)
+    );
+  } else {
+    addParagraph("—");
+  }
+
+  // --- Validations critiques
+  addSection("Validations critiques");
+  addParagraph(`Refus: ${critical.refus.length ? critical.refus.join(" | ") : "—"}`);
+  addParagraph(`Erreurs de champ: ${critical.fieldErrors.length ? critical.fieldErrors.join(" | ") : "—"}`);
+
+  // --- Sauvegarde
+  doc.save(`LLM-${ref}.pdf`);
+};
+
+
+  const pendingLater: PendingLaterItem[] = form.watch("pendingLater") || [];
 
   const handleSubmit = () => {
     const { ref, at } = generateReference();
@@ -96,7 +202,7 @@ Il est donc inutile de visiter les logements à loyer modéré vacants sans avoi
           <div role="separator" className="my-4 h-px w-full bg-border" />
 
           {/* Documents manquants */}
-          <div className="grid md:grid-cols-3 gap-4">
+          <div className="grid md:grid-cols-2 gap-4">
             <div>
               <h3 className="font-medium">Avertissement</h3>
               <ul className="mt-2 text-sm list-disc pl-4">
@@ -104,19 +210,35 @@ Il est donc inutile de visiter les logements à loyer modéré vacants sans avoi
               </ul>
             </div>
             <div>
-  <h3 className="font-medium">Le(s) document(s) manquant(s)</h3>
-  <ul className="mt-2 text-sm list-disc pl-4">
-    {pendingLater.length
-      ? pendingLater.map((p, k) => (
-          <li key={k}>
-            {p.memberName} — {p.sourceLabel} : {p.label}
-          </li>
-        ))
-      : <li>—</li>}
-  </ul>
-</div>
-
+              <h3 className="font-medium">Documents manquants à joindre</h3>
+              <ul className="mt-2 text-sm list-disc pl-4">
+                {pendingLater.length
+                  ? pendingLater.map((p, k) => (
+                      <li key={k}>
+                        {p.memberName} — {p.sourceLabel} : {p.label}
+                      </li>
+                    ))
+                  : <li>—</li>}
+              </ul>
+            </div>
           </div>
+
+          {/* Bloc Information — titres de séjour */}
+  {missing.permitNotice && (
+    <div className="mt-2 rounded-md border border-yellow-300 bg-yellow-50 p-3 space-y-2">
+      <p className="font-medium text-yellow-800">Information — titres de séjour</p>
+      <p className="whitespace-pre-line text-sm text-yellow-900">
+        {missing.permitNotice.notice}
+      </p>
+      {missing.permitNotice.lines?.length > 0 && (
+        <ul className="list-disc pl-5 text-sm text-yellow-900">
+          {missing.permitNotice.lines.map((l, i) => (
+            <li key={i}>{l}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )}
 
           {/* Validations critiques */}
           <div className="space-y-2">

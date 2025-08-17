@@ -1,3 +1,4 @@
+// src/components/steps/Step4Finances.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { UseFormReturn, useWatch } from "react-hook-form";
 import { FormData } from "@/types/form";
@@ -20,23 +21,15 @@ import { calcAge } from "@/lib/helpers";
  * FinanceEntry = {
  *   memberIndex: number,
  *   source: FinanceSource,
- *   // Métadonnées communes
  *   pieces?: { files: File[]; later?: boolean };
- *   // Champs spécifiques par source
- *   // Salarié
  *   employeurs?: { nom: string; justificatifs?: File[] }[];
  *   autresEmployeurs?: boolean;
  *   travailALausanne?: boolean;
- *   // Indépendant
  *   dateDebutActivite?: string; // ISO
- *   // Assurances sociales
  *   degreInvaliditeAI?: number; // 1..100 si AI
- *   // Obligations familiales
  *   pensionRecuOuVerse?: "reçu" | "versé";
- *   // Formation
  *   formationEnCours?: boolean;
  *   formationRemuneree?: boolean;
- *   // Divers
  *   commentaire?: string;
  * }
  */
@@ -114,9 +107,66 @@ function displayName(m: any) {
   return [m?.prenom, m?.nom].filter(Boolean).join(" ");
 }
 
+function requiredDocsFor(entry: any, viaFlagWork: boolean): string[] {
+  const s = entry?.source as FinanceSource;
+
+  // Travail — Salarié
+  if (s === "salarie") {
+    return [
+      "Contrat de travail",
+      "6 dernières fiches de salaire",
+      ...(viaFlagWork ? ["Certificats de salaire des 3 dernières années"] : []),
+    ];
+  }
+
+  // Travail — Indépendant
+  if (s === "independant") {
+    return viaFlagWork
+      ? ["Bilan fiduciaire des 3 dernières années", "Bail commercial"]
+      : ["Bilan fiduciaire", "Si activité < 1 an : décision de cotisations AVS provisoire"];
+  }
+
+  // Assurances sociales / rentes
+  if (s === "ai") return ["Décision AI récente", "Si > 1 an : attestation fiscale récente"];
+  if (s === "avs") return ["Décision AVS récente", "Si > 1 an : attestation fiscale récente"];
+  if (s === "pilier2") return ["Attestation fiscale de la rente LPP"];
+  if (s === "rente_pont") return ["Décision de rente-pont"];
+  if (s === "chomage") return ["Dernier décompte de chômage"];
+
+  // Prestations / aides publiques
+  if (s === "pcfamille") return ["Décision récente de PC Famille"];
+  if (s === "pc") return ["Décision récente de Prestation Complémentaire (PC)"];
+  if (s === "ri") return ["3 derniers budgets mensuels (RI)"];
+  if (s === "evam") return ["3 derniers budgets mensuels (EVAM)"];
+
+  // Obligations familiales
+  if (s === "pension") return ["Convention ratifiée (justificatif)"];
+
+  // Formation
+  if (s === "formation") {
+    return [
+      "Attestation d’études",
+      "Si formation rémunérée : justificatif du revenu (contrat, fiche de salaire ou décision d’allocation)",
+    ];
+  }
+
+  // Apprentissage / Job
+  if (s === "apprentissage") return ["Contrat", "Dernière fiche de salaire"];
+
+  // Autres
+  if (s === "bourse") return ["Avis d’octroi de bourse d’études"];
+  if (s === "autres") return ["Justificatif pertinent (ex. APG : dernier décompte ou décision)"];
+
+  // Sans revenu
+  if (s === "sans_revenu") return [];
+
+  return [];
+}
+
 function extractLaterFromFinances(
   members: any[] | undefined,
-  finances: any[] | undefined
+  finances: any[] | undefined,
+  viaFlagWork: boolean
 ): PendingLater[] {
   if (!finances?.length) return [];
   const nameOf = (idx: number) => displayName(members?.[idx]) || `Personne #${idx}`;
@@ -125,7 +175,9 @@ function extractLaterFromFinances(
   finances.forEach((entry, idxInArray) => {
     const src = entry?.source as FinanceSource | undefined;
     if (!src) return;
+
     if (entry?.pieces?.later === true) {
+      const docs = requiredDocsFor(entry, viaFlagWork);
       list.push({
         id: `${entry.memberIndex}:${src}:pieces`,
         memberIndex: entry.memberIndex,
@@ -133,7 +185,7 @@ function extractLaterFromFinances(
         source: src,
         sourceLabel: SOURCE_LABEL[src],
         fieldPath: `finances[${idxInArray}].pieces`,
-        label: "Justificatifs du revenu (bloc principal)",
+        label: docs.length ? docs.join(" · ") : "Justificatifs",
       });
     }
   });
@@ -144,9 +196,13 @@ function extractLaterFromFinances(
 export function Step4Finances({
   form,
   testMode = false,
+  onValidityChange,
+  showBlocking = false,
 }: {
   form: UseFormReturn<FormData>;
   testMode?: boolean;
+  onValidityChange?: (blocked: boolean) => void;
+  showBlocking?: boolean;
 }) {
   const members = useWatch({ control: form.control, name: "members" }) as any[] | undefined;
   const finances = useWatch({ control: form.control, name: "finances" }) as any[] | undefined;
@@ -154,9 +210,9 @@ export function Step4Finances({
 
   // Snapshot centralisé des "Joindre plus tard"
   useEffect(() => {
-    const pending = extractLaterFromFinances(members, finances);
+    const pending = extractLaterFromFinances(members, finances, viaFlagWork);
     form.setValue("pendingLater" as any, pending, { shouldDirty: false, shouldValidate: false });
-  }, [members, finances, form]);
+  }, [members, finances, viaFlagWork, form]);
 
   const adults = useMemo(() => membersAdults(members || []), [members]);
   const [selectedAdultIndex, setSelectedAdultIndex] = useState<number | null>(adults[0]?.i ?? null);
@@ -212,10 +268,23 @@ export function Step4Finances({
   const isSourceChecked = (memberIndex: number, source: FinanceSource) =>
     entriesForAdult.some((e: any) => e.memberIndex === memberIndex && e.source === source);
 
-  // ====== Validations / Rules
-  const preneur = (members || []).find((m) => m.role === "locataire / preneur");
-  const preneurAge = preneur?.dateNaissance ? calcAge(preneur.dateNaissance) : null;
+  // ====== Règles / Validations locales
 
+  // 1) Qui manque une sélection ? (au moins 1 source par adulte)
+  const adultsMissing = useMemo(() => {
+    if (!adults.length) return [];
+    const adultIdxs = new Set(adults.map((a) => a.i));
+    const hasEntry = new Map<number, boolean>();
+    adultIdxs.forEach((i) => hasEntry.set(i, false));
+    (finances || []).forEach((e: any) => {
+      if (adultIdxs.has(e.memberIndex)) hasEntry.set(e.memberIndex, true);
+    });
+    return adults
+      .filter(({ i }) => !hasEntry.get(i))
+      .map(({ m, i }) => ({ i, name: displayName(m) || `Personne #${i + 1}` }));
+  }, [adults, finances]);
+
+  // 2) Tous les adultes "sans revenu" uniquement ?
   const adultsOnlySansRevenu = useMemo(() => {
     if (!adults.length) return false;
     const adultIdx = new Set(adults.map((a) => a.i));
@@ -226,12 +295,50 @@ export function Step4Finances({
       }
     });
     if (map.size === 0) return false;
-    const allSans = [...map.values()].every(
+    return [...map.values()].every(
       (arr) => arr.length > 0 && arr.every((s) => s === "sans_revenu")
     );
-    return allSans;
   }, [adults, finances]);
 
+  // 2bis) Entrées avec justificatifs manquants (source ≠ "sans_revenu")
+const entriesMissingDocs = useMemo(() => {
+  const list =
+    (finances || [])
+      .filter((e: any) => {
+        const s = e?.source as FinanceSource | undefined;
+        if (!s || s === "sans_revenu") return false; // pas de pièces requises
+        const filesCount = (e?.pieces?.files?.length || 0);
+        const later = e?.pieces?.later === true;
+        const employerHas = (e?.employeurs || []).some((emp: any) => (emp?.justificatifs?.length || 0) > 0);
+        return !(later || filesCount > 0 || employerHas);
+      })
+      .map((e: any) => {
+        const name = displayName(members?.[e.memberIndex]) || `Personne #${(e.memberIndex ?? 0) + 1}`;
+        return {
+          memberIndex: e.memberIndex,
+          source: e.source as FinanceSource,
+          name,
+          sourceLabel: SOURCE_LABEL[e.source as FinanceSource],
+          required: requiredDocsFor(e, viaFlagWork),
+        };
+      });
+
+  return list;
+}, [finances, members, viaFlagWork]);
+
+
+// 3) Remontée au parent : bloqué si manque une sélection, ou tous "sans_revenu", ou pièces manquantes
+useEffect(() => {
+  const blocked = adultsMissing.length > 0 || adultsOnlySansRevenu || entriesMissingDocs.length > 0;
+  onValidityChange?.(testMode ? false : blocked);
+}, [adultsMissing.length, adultsOnlySansRevenu, entriesMissingDocs.length, onValidityChange, testMode]);
+
+  // Pour le highlight du sélecteur courant
+  const currentAdultMissing = adultsMissing.some((a) => a.i === selectedAdultIndex);
+
+  // Info “étudiant”
+  const preneur = (members || []).find((m) => m.role === "locataire / preneur");
+  const preneurAge = preneur?.dateNaissance ? calcAge(preneur.dateNaissance) : null;
   const isDemandeEtudiante = form.watch("typeDemande") === "Conditions étudiantes";
   const etudiantNonEligible = isDemandeEtudiante && preneurAge !== null && preneurAge >= 25;
 
@@ -254,7 +361,7 @@ export function Step4Finances({
             value={selectedAdultIndex !== null ? String(selectedAdultIndex) : ""}
             onValueChange={(val) => setSelectedAdultIndex(parseInt(val, 10))}
           >
-            <SelectTrigger>
+            <SelectTrigger className={showBlocking && currentAdultMissing ? "ring-1 ring-destructive" : ""}>
               <SelectValue placeholder="Choisir une personne" />
             </SelectTrigger>
             <SelectContent>
@@ -301,7 +408,7 @@ export function Step4Finances({
                   })}
                 </div>
 
-                {/* sections détaillées par source cochée (toujours visibles, pas de collapse) */}
+                {/* sections détaillées par source cochée (toujours visibles) */}
                 <div className="space-y-3">
                   {g.items
                     .filter((src) => isSourceChecked(selectedAdultIndex, src))
@@ -328,8 +435,22 @@ export function Step4Finances({
         </div>
       )}
 
-      {/* Avertissements / blocages globaux */}
+      {/* Alertes / blocages globaux */}
       <div className="space-y-3">
+        {showBlocking && adultsMissing.length > 0 && (
+          <Alert variant="destructive" role="alert" aria-live="polite">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              <div className="font-medium mb-2">Sélectionnez au moins une source de revenu pour :</div>
+              <ul className="list-disc pl-5 space-y-1 text-sm">
+                {adultsMissing.map((a) => (
+                  <li key={a.i}>{a.name}</li>
+                ))}
+              </ul>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {adultsOnlySansRevenu && (
           <Alert variant="destructive" role="alert" aria-live="polite">
             <AlertCircle className="h-4 w-4" />
@@ -352,6 +473,27 @@ export function Step4Finances({
             </CardContent>
           </Card>
         )}
+        {showBlocking && entriesMissingDocs.length > 0 && (
+  <Alert variant="destructive" role="alert" aria-live="polite">
+    <AlertCircle className="h-4 w-4" />
+    <AlertDescription>
+      <div className="font-medium mb-2">
+        Pour chaque source sélectionnée, joignez un PDF ou cochez <em>Joindre plus tard</em> :
+      </div>
+      <ul className="list-disc pl-5 space-y-1 text-sm">
+        {entriesMissingDocs.map((x, idx) => (
+          <li key={`${x.memberIndex}-${x.source}-${idx}`}>
+            {x.name} — {x.sourceLabel}
+            {x.required?.length ? (
+              <> · <span className="text-muted-foreground">{x.required.join(" · ")}</span></>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </AlertDescription>
+  </Alert>
+)}
+
       </div>
     </div>
   );
